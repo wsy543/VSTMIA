@@ -16,6 +16,7 @@ from typing import List, Dict, Tuple
 # ================== 依赖检查 ==================
 try:
     from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+    from transformers import AutoModelForVision2Seq
 except ImportError:
     print("Error: Missing transformers/torch.")
     sys.exit(1)
@@ -23,15 +24,54 @@ except ImportError:
 from sklearn.metrics import roc_curve, roc_auc_score
 
 # ================== 全局配置 ==================
-# 请修改为你的实际模型路径
-
-# dataset = 'CIFAR100' #CIFAR10 CIFAR100 tinyimagenet STL10
-# model = 'mobilenet'  #densenet mobilenet resnet shufflenet
-
-MODEL_PATH_VLM = "./vlm"
-MODEL_PATH_LLM = "./llm"
+# 默认模型路径
+VLM_PATHS = {
+    "qwen3":     "./vlm",       # Qwen3-VL-2B
+    "qwen3_8b":  "./vlm_8b",    # Qwen3-VL-8B
+    "gemma4":    "./gemma4",    # Gemma-4-VL
+    "llama3.2":  "./liama3.2",  # Llama-3.2-Vision
+}
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
+
+
+def load_vlm(model_path: str, vlm_type: str):
+    """
+    VLM 模型工厂: 根据 vlm_type 加载对应的模型和 processor
+    :return: (model, processor)
+    """
+    print(f"[VLM Loader] Loading {vlm_type} from {model_path}...")
+    processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+
+    if vlm_type in ("qwen3", "qwen3_8b"):
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
+    elif vlm_type == "llama3.2":
+        from transformers import MllamaForConditionalGeneration
+        model = MllamaForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
+    elif vlm_type == "gemma4":
+        # transformers 5.x 无 Gemma4ForConditionalGeneration, 用 AutoModelForVision2Seq 通用加载
+        model = AutoModelForVision2Seq.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
+    else:
+        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2")
+
+    return model, processor
+
+
+def get_vlm_path(vlm_type: str, custom_path: str | None = None) -> str:
+    """
+    获取 VLM 路径: 优先使用自定义路径, 否则从预设字典查找
+    """
+    if custom_path:
+        return custom_path
+    if vlm_type in VLM_PATHS:
+        return VLM_PATHS[vlm_type]
+    raise ValueError(f"Unknown vlm_type: {vlm_type}. Known types: {list(VLM_PATHS.keys())}")
 
 
 def get_paths(dataset, model):
@@ -109,12 +149,9 @@ class AgentState:
 
 # ================== Phase 1: VLM Screener ==================
 class Phase1Screener:
-    def __init__(self, model_path):
-        print(f"[Phase 1] Loading VLM: {model_path}...")
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
+    def __init__(self, model_path: str, vlm_type: str = "qwen3"):
+        print(f"[Phase 1] Loading VLM ({vlm_type}): {model_path}...")
+        self.model, self.processor = load_vlm(model_path, vlm_type)
         self.prompt = ((
             "Examine the training loss curve in the image. The X-axis represents epochs, and the Y-axis represents loss value.\n"
             "Your Task: Identify if this sample belongs to the training set (Member) based on the curve's geometry.\n\n"
@@ -125,6 +162,27 @@ class Phase1Screener:
             "Answer:"
         ))
 
+    def _build_inputs(self, image_path: str):
+        """构建模型输入, 兼容不同 VLM 的 chat_template 差异"""
+        messages = [{"role": "user", "content": [
+            {"type": "image", "image": os.path.abspath(image_path)},
+            {"type": "text", "text": self.prompt}
+        ]}]
+        # apply_chat_template 在 Qwen3VL / Mllama 上可用; gemma4 用 processor 自带
+        try:
+            inputs = self.processor.apply_chat_template(
+                messages, tokenize=True, add_generation_prompt=True,
+                return_dict=True, return_tensors="pt"
+            )
+        except (AttributeError, Exception):
+            # gemma4 等: 直接用 processor(text=..., images=..., return_tensors="pt")
+            from PIL import Image
+            img = Image.open(os.path.abspath(image_path)).convert("RGB")
+            inputs = self.processor(
+                text=self.prompt, images=img, return_tensors="pt"
+            )
+        return inputs.to(self.model.device)
+
     def scan(self, samples: List[Sample]) -> Dict[int, float]:
         scores = {}
         token_id_1 = self.processor.tokenizer.encode("1", add_special_tokens=False)[0]
@@ -132,13 +190,7 @@ class Phase1Screener:
 
         print(f"[Phase 1] Screening {len(samples)} samples...")
         for s in tqdm(samples):
-            messages = [{"role": "user", "content": [
-                {"type": "image", "image": os.path.abspath(s.image_path)},
-                {"type": "text", "text": self.prompt}
-            ]}]
-            inputs = self.processor.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
-            ).to(self.model.device)
+            inputs = self._build_inputs(s.image_path)
 
             with torch.no_grad():
                 outputs = self.model(**inputs)
@@ -204,12 +256,14 @@ class Phase2Investigator:
         return float(final_score), phy
 # ================== 主程序 ==================
 class LiraLiteAuditor:
-    def __init__(self, dataset: str, model: str):
+    def __init__(self, dataset: str, model: str, vlm_type: str = "qwen3", vlm_path: str | None = None):
         np.random.seed(RANDOM_SEED)
         torch.manual_seed(RANDOM_SEED)
         self.state = AgentState()
         self.dataset = dataset
         self.model = model
+        self.vlm_type = vlm_type
+        self.vlm_path = get_vlm_path(vlm_type, vlm_path)
         self.loss_plot_base, self.loss_history_path = get_paths(dataset, model)
         os.makedirs(REPORT_OUTPUT_DIR, exist_ok=True)
 
@@ -251,7 +305,7 @@ class LiraLiteAuditor:
 
     def run(self):
         # === Phase 1: VLM Screening ===
-        screener = Phase1Screener(MODEL_PATH_VLM)
+        screener = Phase1Screener(self.vlm_path, self.vlm_type)
         self.state.phase1_scores = screener.scan(self.state.samples)
         screener.unload()
 
@@ -545,18 +599,25 @@ class LiraLiteAuditor:
         print("-" * 30)
 
 
-def run_attack(dataset: str, model: str, max_samples: int = 1000):
+def run_attack(dataset: str, model: str, max_samples: int = 1000,
+               vlm_type: str = "qwen3", vlm_path: str | None = None):
     """
     对外暴露的攻击入口函数，供 main.py 等调用
-    
+
     :param dataset: 数据集名称, 如 'CIFAR10', 'CIFAR100', 'STL10' 等
     :param model: 模型名称, 如 'mobilenet', 'densenet', 'resnet' 等
     :param max_samples: 最多测试的样本数
+    :param vlm_type: VLM 类型, qwen3 / qwen3_8b / gemma4 / llama3.2
+    :param vlm_path: 自定义 VLM 路径, 为 None 则使用预设路径
     """
     print(f"\n{'='*60}")
     print(f"LiraLite Attack: dataset={dataset}, model={model}, max_samples={max_samples}")
+    print(f"VLM: {vlm_type} @ {get_vlm_path(vlm_type, vlm_path)}")
     print(f"{'='*60}\n")
-    auditor = LiraLiteAuditor(dataset=dataset, model=model)
+    auditor = LiraLiteAuditor(
+        dataset=dataset, model=model,
+        vlm_type=vlm_type, vlm_path=vlm_path
+    )
     auditor.load_data(max_samples=max_samples)
     auditor.run()
 
@@ -567,10 +628,19 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='CIFAR100', help='Dataset name')
     parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
     parser.add_argument('--max_samples', type=int, default=1000, help='Max test samples')
+    parser.add_argument('--vlm_type', type=str, default='qwen3',
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2'],
+                        help='VLM model type')
+    parser.add_argument('--vlm_path', type=str, default=None,
+                        help='Custom VLM model path (overrides preset)')
     args = parser.parse_args()
-    
+
     try:
-        run_attack(dataset=args.dataset, model=args.model, max_samples=args.max_samples)
+        run_attack(
+            dataset=args.dataset, model=args.model,
+            max_samples=args.max_samples,
+            vlm_type=args.vlm_type, vlm_path=args.vlm_path
+        )
     except Exception as e:
         print(f"Fatal error: {e}")
         import traceback

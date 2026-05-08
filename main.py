@@ -1,62 +1,51 @@
+# ===== 第一步: 自动选GPU (必须在 import torch 之前, 只用 stdlib) =====
+import os
+import subprocess
+import time
+import random
 import argparse
+
+# 随机延迟避免两个进程同时查询 nvidia-smi 的竞态
+time.sleep(random.uniform(0, 2))
+
+def get_best_gpu():
+    """
+    通过 nvidia-smi 命令自动检测显存剩余最多的显卡并返回其 ID。
+    如果检测失败，默认返回 '0'。
+    """
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=index,memory.free', '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=5
+        )
+        best_gpu_id = "0"
+        max_free_memory = -1
+        for line in result.stdout.strip().split('\n'):
+            if line:
+                gpu_id, free_memory = line.split(',')
+                gpu_id = gpu_id.strip()
+                free_memory = int(free_memory.strip())
+                if free_memory > max_free_memory:
+                    max_free_memory = free_memory
+                    best_gpu_id = gpu_id
+        print(f"Auto-selected GPU: {best_gpu_id} with free memory: {max_free_memory} MB")
+        return best_gpu_id
+    except Exception as e:
+        print(f"Failed to auto-detect GPU memory: {e}, defaulting to GPU 0")
+        return "0"
+
+# 自动分配负载最低的显卡 — 必须在 import torch 之前设置!
+os.environ['CUDA_VISIBLE_DEVICES'] = get_best_gpu()
+
+# ===== 第二步: 现在才 import torch =====
 import torch
 from train import FederatedLearning
 from data_processing import process_data
 import logging
 from utils import path_exists
 from baseline_attack import ICLR2023,USENIX2024,SP19,Arxiv2025,MBA,EnhancedMIA,CSF18
-import os
 import ours
-import subprocess
 import test
-
-
-def auto_select_gpu():
-    """
-    自动选择显存占用最少的GPU
-    :return: GPU索引
-    """
-    # 优先使用 pynvml
-    try:
-        import pynvml
-        pynvml.nvmlInit()
-        device_count = pynvml.nvmlDeviceGetCount()
-        best_gpu = 0
-        max_free_memory = 0
-        for i in range(device_count):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            free_memory = mem_info.free
-            if free_memory > max_free_memory:
-                max_free_memory = free_memory
-                best_gpu = i
-        pynvml.nvmlShutdown()
-        logging.info(f"自动选择GPU {best_gpu}, 空闲显存: {max_free_memory / 1024**3:.2f} GB")
-        return best_gpu
-    except ImportError:
-        pass
-
-    # 备选方案: 使用 nvidia-smi
-    try:
-        result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=index,memory.free', '--format=csv,noheader,nounits'],
-            capture_output=True, text=True, timeout=5
-        )
-        lines = result.stdout.strip().split('\n')
-        best_gpu = 0
-        max_free_memory = 0
-        for line in lines:
-            parts = line.split(',')
-            idx = int(parts[0].strip())
-            free_mem = int(parts[1].strip())
-            if free_mem > max_free_memory:
-                max_free_memory = free_mem
-                best_gpu = idx
-        logging.info(f"自动选择GPU {best_gpu}, 空闲显存: {max_free_memory / 1024:.2f} MB")
-        return best_gpu
-    except Exception:
-        logging.warning("无法自动检测GPU, 使用GPU 0")
-        return 0
 
 def init_logging(args):
     """
@@ -91,7 +80,7 @@ def init_args():
     parser.add_argument('--batch_size', type=int, default=64) #
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--optimizer', type=str, default='SGD', help='SGD,Adam')
-    parser.add_argument('--training_round', type=int, default=300, help='模型总的训练轮数')# 200
+    parser.add_argument('--training_round', type=int, default=50, help='模型总的训练轮数')# 200
     parser.add_argument('--participant', type=int, default=5, help='每一轮的参与者数量')
     parser.add_argument('--attacker_client_idx',type=int,default=0)
     parser.add_argument('--collusion_client_idx',type=int,nargs="+",default=[1,2,3])
@@ -104,14 +93,20 @@ def init_args():
     parser.add_argument('--split_ratio', type=float, default=0.5)
     parser.add_argument('--random_seed', type=int, default=123)
     parser.add_argument('--log_name', type=str, default='train_models')
-    parser.add_argument('-lr',type=float,default=0.005)# mobilenet为0.001，其他网络为0.005，文本为0.01
+    parser.add_argument('-lr',type=float,default=0.001)# mobilenet为0.001，其他网络为0.005，文本为0.01
     parser.add_argument('--steplr',type=bool,default=False) # 图像数据集都没有使用
     parser.add_argument('--lr_gamma',type=float,default=0.99)
     parser.add_argument('--lr_step',type=int,default=1)
     parser.add_argument('--method',type=str,default='ours',help='arxiv,USENIX,fluctuate,arxiv,MBA,enhancedMIA, CSF18 ICLR')
 
-    parser.add_argument('--data_process_flag', type=bool, default=True)# 这个开关很危险，慎重！重新对数据进行训练和测试集划分生成full文件
-    parser.add_argument('--train_model', default= True)
+    parser.add_argument('--vlm_type', type=str, default='qwen3',
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2'],
+                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / llama3.2')
+    parser.add_argument('--vlm_path', type=str, default=None,
+                        help='自定义 VLM 路径, 不指定则用预设路径')
+
+    parser.add_argument('--data_process_flag', type=bool, default=False)# 这个开关很危险，慎重！重新对数据进行训练和测试集划分生成full文件
+    parser.add_argument('--train_model', default= False)
 
     parser.add_argument('--arxiv_save',type=bool,default=True)
     return parser.parse_args()
@@ -120,9 +115,6 @@ def init_args():
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # /home/tcadb3090/anaconda3/envs/mamba/bin/python /home/tcadb3090/code/VLMMIA/FL_train/main.py
 
-# 自动选择显存占用最少的GPU
-selected_gpu = auto_select_gpu()
-os.environ['CUDA_VISIBLE_DEVICES'] = str(selected_gpu)
 if __name__ == '__main__':
     args = init_args()
     init_logging(args)
