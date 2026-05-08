@@ -7,6 +7,56 @@ from utils import path_exists
 from baseline_attack import ICLR2023,USENIX2024,SP19,Arxiv2025,MBA,EnhancedMIA,CSF18
 import os
 import ours
+import subprocess
+import test
+
+
+def auto_select_gpu():
+    """
+    自动选择显存占用最少的GPU
+    :return: GPU索引
+    """
+    # 优先使用 pynvml
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        device_count = pynvml.nvmlDeviceGetCount()
+        best_gpu = 0
+        max_free_memory = 0
+        for i in range(device_count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            free_memory = mem_info.free
+            if free_memory > max_free_memory:
+                max_free_memory = free_memory
+                best_gpu = i
+        pynvml.nvmlShutdown()
+        logging.info(f"自动选择GPU {best_gpu}, 空闲显存: {max_free_memory / 1024**3:.2f} GB")
+        return best_gpu
+    except ImportError:
+        pass
+
+    # 备选方案: 使用 nvidia-smi
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=index,memory.free', '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=5
+        )
+        lines = result.stdout.strip().split('\n')
+        best_gpu = 0
+        max_free_memory = 0
+        for line in lines:
+            parts = line.split(',')
+            idx = int(parts[0].strip())
+            free_mem = int(parts[1].strip())
+            if free_mem > max_free_memory:
+                max_free_memory = free_mem
+                best_gpu = idx
+        logging.info(f"自动选择GPU {best_gpu}, 空闲显存: {max_free_memory / 1024:.2f} MB")
+        return best_gpu
+    except Exception:
+        logging.warning("无法自动检测GPU, 使用GPU 0")
+        return 0
 
 def init_logging(args):
     """
@@ -70,7 +120,9 @@ def init_args():
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # /home/tcadb3090/anaconda3/envs/mamba/bin/python /home/tcadb3090/code/VLMMIA/FL_train/main.py
 
-os.environ['CUDA_VISIBLE_DEVICES']="0"
+# 自动选择显存占用最少的GPU
+selected_gpu = auto_select_gpu()
+os.environ['CUDA_VISIBLE_DEVICES'] = str(selected_gpu)
 if __name__ == '__main__':
     args = init_args()
     init_logging(args)
@@ -93,6 +145,8 @@ if __name__ == '__main__':
     elif args.method == 'ours':
         ours = ours.ours(args=args,size=1000)
         ours.make_loader_for_vlm()
+        # 生成完图片后自动运行攻击
+        test.run_attack(dataset=args.dataset, model=args.model, max_samples=1000)
     elif args.method == 'arxiv':
         ours = Arxiv2025(args=args,test_size=500)
         ours.attack()

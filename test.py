@@ -25,15 +25,20 @@ from sklearn.metrics import roc_curve, roc_auc_score
 # ================== 全局配置 ==================
 # 请修改为你的实际模型路径
 
-dataset = 'CIFAR100' #CIFAR10 CIFAR100 tinyimagenet STL10
-model = 'mobilenet'  #densenet mobilenet resnet shufflenet
+# dataset = 'CIFAR100' #CIFAR10 CIFAR100 tinyimagenet STL10
+# model = 'mobilenet'  #densenet mobilenet resnet shufflenet
 
 MODEL_PATH_VLM = "./vlm"
 MODEL_PATH_LLM = "./llm"
-LOSS_PLOT_BASE = f"./plot/vlm_data/{model}/{dataset}/"
-LOSS_HISTORY_PATH = f"./plot/vlm_data/{model}/{dataset}/metrics_history_selected.pkl"
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
+
+
+def get_paths(dataset, model):
+    """根据 dataset 和 model 动态生成路径"""
+    loss_plot_base = f"./plot/vlm_data/{model}/{dataset}/"
+    loss_history_path = f"./plot/vlm_data/{model}/{dataset}/metrics_history_selected.pkl"
+    return loss_plot_base, loss_history_path
 
 
 
@@ -199,19 +204,22 @@ class Phase2Investigator:
         return float(final_score), phy
 # ================== 主程序 ==================
 class LiraLiteAuditor:
-    def __init__(self):
+    def __init__(self, dataset: str, model: str):
         np.random.seed(RANDOM_SEED)
         torch.manual_seed(RANDOM_SEED)
         self.state = AgentState()
+        self.dataset = dataset
+        self.model = model
+        self.loss_plot_base, self.loss_history_path = get_paths(dataset, model)
         os.makedirs(REPORT_OUTPUT_DIR, exist_ok=True)
 
     def load_data(self, max_samples=600):
         print(f"[Data] Loading dataset... Target Mixed Samples: {max_samples} (Dynamic Calibration Mode)")
-        m_imgs = sorted(glob.glob(os.path.join(LOSS_PLOT_BASE, "member", "*.png")))
-        nm_imgs = sorted(glob.glob(os.path.join(LOSS_PLOT_BASE, "nonmember", "*.png")))
+        m_imgs = sorted(glob.glob(os.path.join(self.loss_plot_base, "member", "*.png")))
+        nm_imgs = sorted(glob.glob(os.path.join(self.loss_plot_base, "nonmember", "*.png")))
 
         try:
-            with open(LOSS_HISTORY_PATH, 'rb') as f:
+            with open(self.loss_history_path, 'rb') as f:
                 data = pickle.load(f)
             m_loss = data.get("member", {}).get("loss", [])
             nm_loss = data.get("non_member", {}).get("loss", [])
@@ -537,11 +545,34 @@ class LiraLiteAuditor:
         print("-" * 30)
 
 
+def run_attack(dataset: str, model: str, max_samples: int = 1000):
+    """
+    对外暴露的攻击入口函数，供 main.py 等调用
+    
+    :param dataset: 数据集名称, 如 'CIFAR10', 'CIFAR100', 'STL10' 等
+    :param model: 模型名称, 如 'mobilenet', 'densenet', 'resnet' 等
+    :param max_samples: 最多测试的样本数
+    """
+    print(f"\n{'='*60}")
+    print(f"LiraLite Attack: dataset={dataset}, model={model}, max_samples={max_samples}")
+    print(f"{'='*60}\n")
+    auditor = LiraLiteAuditor(dataset=dataset, model=model)
+    auditor.load_data(max_samples=max_samples)
+    auditor.run()
+
+
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description='LiraLite MIA Attack')
+    parser.add_argument('--dataset', type=str, default='CIFAR100', help='Dataset name')
+    parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
+    parser.add_argument('--max_samples', type=int, default=1000, help='Max test samples')
+    args = parser.parse_args()
+    
     try:
-        auditor = LiraLiteAuditor()
-        auditor.load_data(max_samples=1000)  # 这里只需要填你想测试的总数量，完美 1:1 分布！
-        auditor.run()
+        run_attack(dataset=args.dataset, model=args.model, max_samples=args.max_samples)
     except Exception as e:
         print(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
