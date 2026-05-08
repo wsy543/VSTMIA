@@ -80,7 +80,7 @@ def init_args():
     parser.add_argument('--batch_size', type=int, default=64) #
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--optimizer', type=str, default='SGD', help='SGD,Adam')
-    parser.add_argument('--training_round', type=int, default=50, help='模型总的训练轮数')# 200
+    parser.add_argument('--training_round', type=int, default=200, help='模型总的训练轮数')# 200
     parser.add_argument('--participant', type=int, default=5, help='每一轮的参与者数量')
     parser.add_argument('--attacker_client_idx',type=int,default=0)
     parser.add_argument('--collusion_client_idx',type=int,nargs="+",default=[1,2,3])
@@ -107,6 +107,8 @@ def init_args():
 
     parser.add_argument('--data_process_flag', type=bool, default=False)# 这个开关很危险，慎重！重新对数据进行训练和测试集划分生成full文件
     parser.add_argument('--train_model', default= False)
+    parser.add_argument('--regenerate_plots', default=True, action='store_true',
+                        help='是否重新生成 VLM 输入图片, 不加此参数则跳过生成直接攻击')
 
     parser.add_argument('--arxiv_save',type=bool,default=True)
     return parser.parse_args()
@@ -135,10 +137,14 @@ if __name__ == '__main__':
         sp = SP19(args=args,data_size=350)
         sp.attack(train=True)
     elif args.method == 'ours':
-        ours = ours.ours(args=args,size=1000)
-        ours.make_loader_for_vlm()
+        if args.regenerate_plots:
+            ours = ours.ours(args=args,size=1000)
+            ours.make_loader_for_vlm()
+        else:
+            print("[Skip] 跳过图片生成, 直接使用已有图片进行攻击")
         # 生成完图片后自动运行攻击
-        test.run_attack(dataset=args.dataset, model=args.model, max_samples=1000)
+        test.run_attack(dataset=args.dataset, model=args.model, max_samples=1000,
+                        vlm_type=args.vlm_type, vlm_path=args.vlm_path)
     elif args.method == 'arxiv':
         ours = Arxiv2025(args=args,test_size=500)
         ours.attack()

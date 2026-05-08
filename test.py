@@ -13,23 +13,26 @@ from tqdm import tqdm
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 
-# ================== 依赖检查 ==================
+# ================== 延迟依赖检查 ==================
+# transformers 只在 VLM 相关路径使用, 其他方法(ICLR/USENIX/MBA等)不需要
+# 模块级静默导入, 缺失时只在 load_vlm() 报错
 try:
     from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
-    from transformers import AutoModelForVision2Seq
+    _HAS_TRANSFORMERS = True
 except ImportError:
-    print("Error: Missing transformers/torch.")
-    sys.exit(1)
+    Qwen3VLForConditionalGeneration = None
+    AutoProcessor = None
+    _HAS_TRANSFORMERS = False
 
 from sklearn.metrics import roc_curve, roc_auc_score
 
 # ================== 全局配置 ==================
 # 默认模型路径
 VLM_PATHS = {
-    "qwen3":     "./vlm",       # Qwen3-VL-2B
-    "qwen3_8b":  "./vlm_8b",    # Qwen3-VL-8B
-    "gemma4":    "./gemma4",    # Gemma-4-VL
-    "llama3.2":  "./liama3.2",  # Llama-3.2-Vision
+    "qwen3":     "./vlm",
+    "qwen3_8b":  "./vlm_8b",
+    "gemma4":    "./gemma4",
+    "llama3.2":  "./liama3.2",
 }
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
@@ -40,6 +43,10 @@ def load_vlm(model_path: str, vlm_type: str):
     VLM 模型工厂: 根据 vlm_type 加载对应的模型和 processor
     :return: (model, processor)
     """
+    if not _HAS_TRANSFORMERS:
+        raise ImportError(
+            "transformers not found. Please install: pip install transformers"
+        )
     print(f"[VLM Loader] Loading {vlm_type} from {model_path}...")
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
 
@@ -53,8 +60,10 @@ def load_vlm(model_path: str, vlm_type: str):
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
     elif vlm_type == "gemma4":
-        # transformers 5.x 无 Gemma4ForConditionalGeneration, 用 AutoModelForVision2Seq 通用加载
-        model = AutoModelForVision2Seq.from_pretrained(
+        # transformers 5.8.0 内置 Gemma4ForConditionalGeneration
+        # token 格式: <|image>(boi) <|image|>(image, 256个) <image|>(eoi)
+        from transformers import Gemma4ForConditionalGeneration
+        model = Gemma4ForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
     else:
@@ -152,6 +161,7 @@ class Phase1Screener:
     def __init__(self, model_path: str, vlm_type: str = "qwen3"):
         print(f"[Phase 1] Loading VLM ({vlm_type}): {model_path}...")
         self.model, self.processor = load_vlm(model_path, vlm_type)
+        self.vlm_type = vlm_type
         self.prompt = ((
             "Examine the training loss curve in the image. The X-axis represents epochs, and the Y-axis represents loss value.\n"
             "Your Task: Identify if this sample belongs to the training set (Member) based on the curve's geometry.\n\n"
@@ -168,19 +178,27 @@ class Phase1Screener:
             {"type": "image", "image": os.path.abspath(image_path)},
             {"type": "text", "text": self.prompt}
         ]}]
-        # apply_chat_template 在 Qwen3VL / Mllama 上可用; gemma4 用 processor 自带
-        try:
+        # Qwen3VL / Llama 3.2 有 apply_chat_template
+        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2"):
             inputs = self.processor.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
                 return_dict=True, return_tensors="pt"
             )
-        except (AttributeError, Exception):
-            # gemma4 等: 直接用 processor(text=..., images=..., return_tensors="pt")
+        elif self.vlm_type == "gemma4":
+            # Gemma-4 token 格式: <|image>(boi) + 256*<|image|>(image) + <image|>(eoi)
+            # boi/image/eoi 从 tokenizer 动态获取, 不硬编码
             from PIL import Image
             img = Image.open(os.path.abspath(image_path)).convert("RGB")
+            t = self.processor.tokenizer
+            boi_str = t.decode([t.boi_token_id])
+            img_str = t.decode([t.image_token_id])
+            eoi_str = t.decode([t.eoi_token_id])
+            prompt_with_tokens = f"{boi_str}{img_str}{eoi_str}\n{self.prompt}"
             inputs = self.processor(
-                text=self.prompt, images=img, return_tensors="pt"
+                text=prompt_with_tokens, images=img, return_tensors="pt"
             )
+        else:
+            raise ValueError(f"Unknown vlm_type: {self.vlm_type}")
         return inputs.to(self.model.device)
 
     def scan(self, samples: List[Sample]) -> Dict[int, float]:
