@@ -75,10 +75,15 @@ def load_vlm(model_path: str, vlm_type: str):
         )
     elif vlm_type == "minicpmv4.5":
         # MiniCPMV 通过 auto_map 映射到自定义类, 必须 trust_remote_code=True
+        # 注意: MiniCPM 的 modeling 有 _tied_weights_keys 但 accelerate 查 all_tied_weights_keys
+        # 导致 device_map="auto" 时 AttributeError。解决: 先加载到 CPU, 再手动 .cuda()
         from transformers import AutoModel
         model = AutoModel.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+            model_path, torch_dtype=torch.float16, trust_remote_code=True
         )
+        if torch.cuda.is_available():
+            model = model.cuda()
+        model.eval()
     else:
         raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, minicpmv4.5")
 
