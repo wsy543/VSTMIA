@@ -34,6 +34,7 @@ VLM_PATHS = {
     "gemma4":      "./gemma4",
     "llama3.2":    "./llama3.2",
     "internvl3.5": "./internvl3.5",
+    "llavaov":     "./llavaov",
 }
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
@@ -72,8 +73,14 @@ def load_vlm(model_path: str, vlm_type: str):
         model = InternVLForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
+    elif vlm_type == "llavaov":
+        # LLaVA OneVision (based on Qwen2-7B)
+        from transformers import LlavaOnevisionForConditionalGeneration
+        model = LlavaOnevisionForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
     else:
-        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5")
+        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, llavaov")
 
     return model, processor
 
@@ -187,7 +194,7 @@ class Phase1Screener:
             {"type": "text", "text": self.prompt}
         ]}]
         # Qwen3VL / Llama 3.2 / InternVL3.5 有 apply_chat_template
-        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2", "internvl3.5"):
+        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2", "internvl3.5", "llavaov"):
             inputs = self.processor.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
                 return_dict=True, return_tensors="pt"
