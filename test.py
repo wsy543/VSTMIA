@@ -34,7 +34,6 @@ VLM_PATHS = {
     "gemma4":      "./gemma4",
     "llama3.2":    "./llama3.2",
     "internvl3.5": "./internvl3.5",
-    "minicpmv4.5": "./minicpmv4.5",
 }
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
@@ -73,19 +72,8 @@ def load_vlm(model_path: str, vlm_type: str):
         model = InternVLForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
-    elif vlm_type == "minicpmv4.5":
-        # MiniCPMV 通过 auto_map 映射到自定义类, 必须 trust_remote_code=True
-        # 注意: MiniCPM 的 modeling 有 _tied_weights_keys 但 accelerate 查 all_tied_weights_keys
-        # 导致 device_map="auto" 时 AttributeError。解决: 先加载到 CPU, 再手动 .cuda()
-        from transformers import AutoModel
-        model = AutoModel.from_pretrained(
-            model_path, torch_dtype=torch.float16, trust_remote_code=True
-        )
-        if torch.cuda.is_available():
-            model = model.cuda()
-        model.eval()
     else:
-        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, minicpmv4.5")
+        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5")
 
     return model, processor
 
@@ -214,17 +202,6 @@ class Phase1Screener:
             prompt_with_tokens = f"{self.processor.image_token}\n{self.prompt}"
             inputs = self.processor(
                 text=prompt_with_tokens, images=img, return_tensors="pt"
-            )
-        elif self.vlm_type == "minicpmv4.5":
-            # MiniCPMV: tokenizer.apply_chat_template 生成 prompt (含 <image> 占位符)
-            #          再交 processor(text=prompt, images=img) 替换占位符并编码
-            from PIL import Image
-            img = Image.open(os.path.abspath(image_path)).convert("RGB")
-            prompt = self.processor.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            inputs = self.processor(
-                text=prompt, images=[img], return_tensors="pt"
             )
         else:
             raise ValueError(f"Unknown vlm_type: {self.vlm_type}")
@@ -676,7 +653,7 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
     parser.add_argument('--max_samples', type=int, default=1000, help='Max test samples')
     parser.add_argument('--vlm_type', type=str, default='qwen3',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5', 'minicpmv4.5'],
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5'],
                         help='VLM model type')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='Custom VLM model path (overrides preset)')

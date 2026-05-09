@@ -100,8 +100,8 @@ def init_args():
     parser.add_argument('--method',type=str,default='ours',help='arxiv,USENIX,fluctuate,arxiv,MBA,enhancedMIA, CSF18 ICLR')
 
     parser.add_argument('--vlm_type', type=str, default='llama3.2',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5', 'minicpmv4.5'],
-                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / llama3.2 / internvl3.5(8B) / minicpmv4.5')
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5'],
+                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / llama3.2 / internvl3.5(8B)')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='自定义 VLM 路径, 不指定则用预设路径')
 
