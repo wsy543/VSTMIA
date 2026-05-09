@@ -110,6 +110,19 @@ def init_args():
 
     parser.add_argument('--regenerate_plots', default=False, action='store_true',
                         help='是否重新生成 VLM 输入图片, 不加此参数则跳过生成直接攻击')
+    # Phase 开关 (默认开启 Phase 2, 传 --no_phase2 关闭)
+    parser.add_argument('--no_phase2', dest='phase2', action='store_false', default=True,
+                        help='禁用 Phase 2 (Physics-based Analysis)')
+    # 物理分析超参数
+    parser.add_argument('--physics_alpha_cap', type=float, default=5.0,
+                        help='物理特征权重上限 (adaptive_alpha 的 clamp 值), 默认 5.0')
+    parser.add_argument('--calib_threshold', type=float, default=0.1,
+                        help='校准池伪负样本的 VLM 分数阈值, 默认 0.1')
+    parser.add_argument('--head_ratio', type=float, default=0.5,
+                        help='头部轮数比例 (用于下降速率特征提取), 默认 0.5')
+    parser.add_argument('--tail_ratio', type=float, default=0.5,
+                        help='尾部轮数比例 (用于末期波动特征提取), 默认 0.5')
+    
     # VLM 图片生成参数 (控制输入图像的尺寸, 影响 VLM 的视觉理解效果)
     parser.add_argument('--plot_width', type=float, default=6.22,
                         help='图片宽度 (英寸), 默认 6.0, 建议与 plot_height 相近以兼容方形 resize 的模型')
@@ -153,7 +166,12 @@ if __name__ == '__main__':
             print("[Skip] 跳过图片生成, 直接使用已有图片进行攻击")
         # 生成完图片后自动运行攻击
         test.run_attack(dataset=args.dataset, model=args.model, max_samples=1000,
-                        vlm_type=args.vlm_type, vlm_path=args.vlm_path)
+                        vlm_type=args.vlm_type, vlm_path=args.vlm_path,
+                        enable_phase2=args.phase2,
+                        alpha_cap=args.physics_alpha_cap,
+                        calib_threshold=args.calib_threshold,
+                        head_ratio=args.head_ratio,
+                        tail_ratio=args.tail_ratio)
     elif args.method == 'arxiv':
         ours = Arxiv2025(args=args,test_size=500)
         ours.attack()

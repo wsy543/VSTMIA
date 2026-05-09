@@ -39,7 +39,6 @@ VLM_PATHS = {
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
 
-
 def load_vlm(model_path: str, vlm_type: str):
     """
     VLM 模型工厂: 根据 vlm_type 加载对应的模型和 processor
@@ -106,6 +105,10 @@ def get_paths(dataset, model):
 
 # ================== 核心：物理动力学工具箱 ==================
 class DynamicsToolkit:
+    def __init__(self, head_ratio: float = 0.5, tail_ratio: float = 0.5):
+        self.head_ratio = head_ratio
+        self.tail_ratio = tail_ratio
+
     def extract_features(self, loss_seq: List[float]) -> Dict[str, float]:
         y = np.array(loss_seq)
         T = len(y)
@@ -121,7 +124,7 @@ class DynamicsToolkit:
         # 1. 真实下降速率 (True Descent Rate)
         # 只取前 30% 阶段的下降步伐
         # ==========================================
-        head_end_idx = max(2, int(T * 0.5))
+        head_end_idx = max(2, int(T * self.head_ratio))
         y_head = y[:head_end_idx]
 
         diffs = np.diff(y_head)
@@ -137,7 +140,7 @@ class DynamicsToolkit:
         # ==========================================
         # 2. 末期波动累积 (Tail Fluctuation)
         # ==========================================
-        tail_start_idx = int(T * 0.5)
+        tail_start_idx = int(T * self.tail_ratio)
         y_tail = y[tail_start_idx:]
 
         if len(y_tail) >= 2:
@@ -242,9 +245,9 @@ class Phase1Screener:
 
 
 class Phase2Investigator:
-    def __init__(self, calibration_data: List[Dict]):
+    def __init__(self, calibration_data: List[Dict], head_ratio: float = 0.5, tail_ratio: float = 0.5):
         print("[Phase 2] Building Non-parametric Background Distribution (eCDF)...")
-        self.physics = DynamicsToolkit()
+        self.physics = DynamicsToolkit(head_ratio=head_ratio, tail_ratio=tail_ratio)
         self.bg_pool = {}
 
         # 核心改动：不再算 mean 和 std，而是直接把非成员池的数值存下来，并排序！
@@ -287,7 +290,10 @@ class Phase2Investigator:
         return float(final_score), phy
 # ================== 主程序 ==================
 class LiraLiteAuditor:
-    def __init__(self, dataset: str, model: str, vlm_type: str = "qwen3", vlm_path: str | None = None):
+    def __init__(self, dataset: str, model: str, vlm_type: str = "qwen3", vlm_path: str | None = None,
+                 enable_phase2: bool = True,
+                 alpha_cap: float = 5.0, calib_threshold: float = 0.1,
+                 head_ratio: float = 0.5, tail_ratio: float = 0.5):
         np.random.seed(RANDOM_SEED)
         torch.manual_seed(RANDOM_SEED)
         self.state = AgentState()
@@ -296,6 +302,11 @@ class LiraLiteAuditor:
         self.vlm_type = vlm_type
         self.vlm_path = get_vlm_path(vlm_type, vlm_path)
         self.loss_plot_base, self.loss_history_path = get_paths(dataset, model)
+        self.enable_phase2 = enable_phase2
+        self.alpha_cap = alpha_cap
+        self.calib_threshold = calib_threshold
+        self.head_ratio = head_ratio
+        self.tail_ratio = tail_ratio
         os.makedirs(REPORT_OUTPUT_DIR, exist_ok=True)
 
     def load_data(self, max_samples=600):
@@ -335,7 +346,7 @@ class LiraLiteAuditor:
         print(f"[Data] Loaded {target_test_m} Members and {target_test_nm} Non-Members. Total: {len(samples)}.")
 
     def run(self):
-        # === Phase 1: VLM Screening ===
+        # === Phase 1: VLM Screening (始终开启) ===
         screener = Phase1Screener(self.vlm_path, self.vlm_type)
         self.state.phase1_scores = screener.scan(self.state.samples)
         screener.unload()
@@ -343,16 +354,16 @@ class LiraLiteAuditor:
         # === 建立动态背景模型 (无监督) ===
         print("\n[Calibration] Dynamically building calibration pool from VLM highly confident pseudo-negatives...")
 
-        calib_candidates = [s for s in self.state.samples if self.state.phase1_scores[s.sample_id] < 0.1]
+        calib_candidates = [s for s in self.state.samples if self.state.phase1_scores[s.sample_id] < self.calib_threshold]
 
         if len(calib_candidates) < 10:
-            print("  > Warning: Too few samples < 0.1. Backing off to bottom 10% of samples.")
+            print(f"  > Warning: Too few samples < {self.calib_threshold}. Backing off to bottom 10% of samples.")
             sorted_samples = sorted(self.state.samples, key=lambda s: self.state.phase1_scores[s.sample_id])
             calib_candidates = sorted_samples[:max(10, len(self.state.samples) // 10)]
 
         print(f"  > Selected {len(calib_candidates)} pseudo-non-members for calibration.")
 
-        toolkit = DynamicsToolkit()
+        toolkit = DynamicsToolkit(head_ratio=self.head_ratio, tail_ratio=self.tail_ratio)
         self.state.calibration_pool = [toolkit.extract_features(s.loss_sequence) for s in calib_candidates]
 
         # === 计算自适应权重 (Adaptive Weighting) ===
@@ -365,36 +376,53 @@ class LiraLiteAuditor:
         # 【终极自适应公式】：不确定性与置信度比率 (Uncertainty-to-Confidence Ratio)
         # 加上 1e-5 防止除以 0，加上 min(5.0, ...) 作为最高权重上限防崩
         adaptive_alpha = (1.0 - mean_confidence) / (mean_confidence + 1e-5)
-        adaptive_alpha = min(5.0, float(adaptive_alpha))  # 将物理分数权重封顶在 5.0
+        adaptive_alpha = min(self.alpha_cap, float(adaptive_alpha))  # 将物理分数权重封顶
 
         print("\n[Fusion Strategy] Computing task-complexity adaptive weights...")
         print(f"  > VLM Mean Confidence: {mean_confidence:.3f}")
         print(f"  > Auto-set Physics Weight (Alpha): {adaptive_alpha:.3f}")
 
-        # === Phase 2: Calibrated Analysis ===
-        investigator = Phase2Investigator(self.state.calibration_pool)
         details = []
 
-        print("[Phase 2] Running dynamic evaluation pipeline...")
-        for sample in tqdm(self.state.samples):
-            vlm_score = self.state.phase1_scores[sample.sample_id]
+        if self.enable_phase2:
+            # === Phase 2: Calibrated Analysis ===
+            investigator = Phase2Investigator(self.state.calibration_pool,
+                                              head_ratio=self.head_ratio, tail_ratio=self.tail_ratio)
 
-            if vlm_score < 0.1:
-                final_score = vlm_score
+            print("[Phase 2] Running dynamic evaluation pipeline...")
+            for sample in tqdm(self.state.samples):
+                vlm_score = self.state.phase1_scores[sample.sample_id]
+
+                if vlm_score < self.calib_threshold:
+                    final_score = vlm_score
+                    phy = toolkit.extract_features(sample.loss_sequence)
+                else:
+                    # 【修改这里】：把计算好的 adaptive_alpha 传进去！
+                    final_score, phy = investigator.analyze(sample, vlm_score, alpha=adaptive_alpha)
+
+                self.state.final_scores[sample.sample_id] = final_score
+
+                details.append({
+                    "id": int(sample.sample_id),
+                    "gt": int(sample.true_label),
+                    "score": float(final_score),
+                    "features": phy,
+                    "vlm_score": float(vlm_score)
+                })
+        else:
+            # Phase 2 关闭: 直接使用 Phase 1 得分作为最终得分
+            print("[Phase 2] SKIPPED — using Phase 1 scores directly as final scores")
+            for sample in tqdm(self.state.samples):
+                vlm_score = self.state.phase1_scores[sample.sample_id]
                 phy = toolkit.extract_features(sample.loss_sequence)
-            else:
-                # 【修改这里】：把计算好的 adaptive_alpha 传进去！
-                final_score, phy = investigator.analyze(sample, vlm_score, alpha=adaptive_alpha)
-
-            self.state.final_scores[sample.sample_id] = final_score
-
-            details.append({
-                "id": int(sample.sample_id),
-                "gt": int(sample.true_label),
-                "score": float(final_score),
-                "features": phy,
-                "vlm_score": float(vlm_score)
-            })
+                self.state.final_scores[sample.sample_id] = vlm_score
+                details.append({
+                    "id": int(sample.sample_id),
+                    "gt": int(sample.true_label),
+                    "score": float(vlm_score),
+                    "features": phy,
+                    "vlm_score": float(vlm_score)
+                })
 
         with open(os.path.join(REPORT_OUTPUT_DIR, "audit_details.json"), "w") as f:
             json.dump(details, f, indent=2)
@@ -631,23 +659,36 @@ class LiraLiteAuditor:
 
 
 def run_attack(dataset: str, model: str, max_samples: int = 1000,
-               vlm_type: str = "qwen3", vlm_path: str | None = None):
+               vlm_type: str = "qwen3", vlm_path: str | None = None,
+               enable_phase2: bool = True,
+               alpha_cap: float = 5.0, calib_threshold: float = 0.1,
+               head_ratio: float = 0.5, tail_ratio: float = 0.5):
     """
     对外暴露的攻击入口函数，供 main.py 等调用
 
     :param dataset: 数据集名称, 如 'CIFAR10', 'CIFAR100', 'STL10' 等
     :param model: 模型名称, 如 'mobilenet', 'densenet', 'resnet' 等
     :param max_samples: 最多测试的样本数
-    :param vlm_type: VLM 类型, qwen3 / qwen3_8b / gemma4 / llama3.2
+    :param vlm_type: VLM 类型, qwen3 / qwen3_8b / gemma4 / llama3.2 / internvl3.5 / llavaov
     :param vlm_path: 自定义 VLM 路径, 为 None 则使用预设路径
+    :param enable_phase2: 是否启用 Phase 2 (Physics-based Analysis), 默认开启
+    :param alpha_cap: 物理特征权重上限, 默认 5.0
+    :param calib_threshold: 校准池伪负样本 VLM 分数阈值, 默认 0.1
+    :param head_ratio: 头部轮数比例 (下降速率), 默认 0.5
+    :param tail_ratio: 尾部轮数比例 (末期波动), 默认 0.5
     """
     print(f"\n{'='*60}")
     print(f"LiraLite Attack: dataset={dataset}, model={model}, max_samples={max_samples}")
     print(f"VLM: {vlm_type} @ {get_vlm_path(vlm_type, vlm_path)}")
+    print(f"Phase2={enable_phase2}")
+    print(f"alpha_cap={alpha_cap}, calib_threshold={calib_threshold}, head_ratio={head_ratio}, tail_ratio={tail_ratio}")
     print(f"{'='*60}\n")
     auditor = LiraLiteAuditor(
         dataset=dataset, model=model,
-        vlm_type=vlm_type, vlm_path=vlm_path
+        vlm_type=vlm_type, vlm_path=vlm_path,
+        enable_phase2=enable_phase2,
+        alpha_cap=alpha_cap, calib_threshold=calib_threshold,
+        head_ratio=head_ratio, tail_ratio=tail_ratio
     )
     auditor.load_data(max_samples=max_samples)
     auditor.run()
