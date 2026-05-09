@@ -29,10 +29,12 @@ from sklearn.metrics import roc_curve, roc_auc_score
 # ================== 全局配置 ==================
 # 默认模型路径
 VLM_PATHS = {
-    "qwen3":     "./vlm",
-    "qwen3_8b":  "./vlm_8b",
-    "gemma4":    "./gemma4",
-    "llama3.2":  "./liama3.2",
+    "qwen3":       "./vlm",
+    "qwen3_8b":    "./vlm_8b",
+    "gemma4":      "./gemma4",
+    "llama3.2":    "./llama3.2",
+    "internvl3.5": "./internvl3.5",
+    "minicpmv4.5": "./minicpmv4.5",
 }
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
@@ -66,8 +68,19 @@ def load_vlm(model_path: str, vlm_type: str):
         model = Gemma4ForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
+    elif vlm_type == "internvl3.5":
+        from transformers import InternVLForConditionalGeneration
+        model = InternVLForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
+    elif vlm_type == "minicpmv4.5":
+        # MiniCPMV 通过 auto_map 映射到自定义类, 必须 trust_remote_code=True
+        from transformers import AutoModel
+        model = AutoModel.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
     else:
-        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2")
+        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, minicpmv4.5")
 
     return model, processor
 
@@ -163,7 +176,9 @@ class Phase1Screener:
         self.model, self.processor = load_vlm(model_path, vlm_type)
         self.vlm_type = vlm_type
         self.prompt = ((
-            "Examine the training loss curve in the image. The X-axis represents epochs, and the Y-axis represents loss value.\n"
+            "Examine the training loss curve in the image. "
+            "The X-axis represents training rounds (model checkpoints over time), "
+            "and the Y-axis represents loss value.\n"
             "Your Task: Identify if this sample belongs to the training set (Member) based on the curve's geometry.\n\n"
             "Visual Definitions:\n"
             "- Member (1): Feature 'Hockey Stick' shape. Extremely sharp initial drop followed by a perfect flatline near the X-axis (zero).\n"
@@ -178,24 +193,33 @@ class Phase1Screener:
             {"type": "image", "image": os.path.abspath(image_path)},
             {"type": "text", "text": self.prompt}
         ]}]
-        # Qwen3VL / Llama 3.2 有 apply_chat_template
-        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2"):
+        # Qwen3VL / Llama 3.2 / InternVL3.5 有 apply_chat_template
+        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2", "internvl3.5"):
             inputs = self.processor.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
                 return_dict=True, return_tensors="pt"
             )
         elif self.vlm_type == "gemma4":
-            # Gemma-4 token 格式: <|image>(boi) + 256*<|image|>(image) + <image|>(eoi)
-            # boi/image/eoi 从 tokenizer 动态获取, 不硬编码
+            # Gemma4 processor 内部机制:
+            #   传入 images → image_processor 算出 num_soft_tokens_per_image
+            #   传入 text (含 image_token 占位符) → processor 自动替换为 boi + image×N + eoi
+            #   无需手动拼接 token, 否则会破坏内部 regex 替换迭代器导致 StopIteration
             from PIL import Image
             img = Image.open(os.path.abspath(image_path)).convert("RGB")
-            t = self.processor.tokenizer
-            boi_str = t.decode([t.boi_token_id])
-            img_str = t.decode([t.image_token_id])
-            eoi_str = t.decode([t.eoi_token_id])
-            prompt_with_tokens = f"{boi_str}{img_str}{eoi_str}\n{self.prompt}"
+            prompt_with_tokens = f"{self.processor.image_token}\n{self.prompt}"
             inputs = self.processor(
                 text=prompt_with_tokens, images=img, return_tensors="pt"
+            )
+        elif self.vlm_type == "minicpmv4.5":
+            # MiniCPMV: tokenizer.apply_chat_template 生成 prompt (含 <image> 占位符)
+            #          再交 processor(text=prompt, images=img) 替换占位符并编码
+            from PIL import Image
+            img = Image.open(os.path.abspath(image_path)).convert("RGB")
+            prompt = self.processor.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            inputs = self.processor(
+                text=prompt, images=[img], return_tensors="pt"
             )
         else:
             raise ValueError(f"Unknown vlm_type: {self.vlm_type}")
@@ -647,7 +671,7 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
     parser.add_argument('--max_samples', type=int, default=1000, help='Max test samples')
     parser.add_argument('--vlm_type', type=str, default='qwen3',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2'],
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5', 'minicpmv4.5'],
                         help='VLM model type')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='Custom VLM model path (overrides preset)')

@@ -99,16 +99,25 @@ def init_args():
     parser.add_argument('--lr_step',type=int,default=1)
     parser.add_argument('--method',type=str,default='ours',help='arxiv,USENIX,fluctuate,arxiv,MBA,enhancedMIA, CSF18 ICLR')
 
-    parser.add_argument('--vlm_type', type=str, default='qwen3',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2'],
-                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / llama3.2')
+    parser.add_argument('--vlm_type', type=str, default='llama3.2',
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5', 'minicpmv4.5'],
+                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / llama3.2 / internvl3.5(8B) / minicpmv4.5')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='自定义 VLM 路径, 不指定则用预设路径')
 
     parser.add_argument('--data_process_flag', type=bool, default=False)# 这个开关很危险，慎重！重新对数据进行训练和测试集划分生成full文件
     parser.add_argument('--train_model', default= False)
-    parser.add_argument('--regenerate_plots', default=True, action='store_true',
+
+    parser.add_argument('--regenerate_plots', default=False, action='store_true',
                         help='是否重新生成 VLM 输入图片, 不加此参数则跳过生成直接攻击')
+    # VLM 图片生成参数 (控制输入图像的尺寸, 影响 VLM 的视觉理解效果)
+    parser.add_argument('--plot_width', type=float, default=6.22,
+                        help='图片宽度 (英寸), 默认 6.0, 建议与 plot_height 相近以兼容方形 resize 的模型')
+    parser.add_argument('--plot_height', type=float, default=2.67,
+                        help='图片高度 (英寸), 默认 6.0')
+    parser.add_argument('--plot_dpi', type=int, default=150,
+                        help='图片分辨率 DPI, 默认 150')
+    # qwen3是 (6.22, 2.67)
 
     parser.add_argument('--arxiv_save',type=bool,default=True)
     return parser.parse_args()

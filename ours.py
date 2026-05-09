@@ -327,10 +327,10 @@ class ours:
             losses = np.array(losses).T  # [B, num_models]
 
             for j in range(data.size(0)):
-                # 🖼️ 保留画图逻辑
-                plt.figure(figsize=(6.22, 2.67))
+                # 🖼️ 保留画图逻辑 (尺寸从 args 控制, 默认 6x6 以兼容 Llama/Gemma 等方形 resize 模型)
+                plt.figure(figsize=(self.args.plot_width, self.args.plot_height), dpi=self.args.plot_dpi)
                 plt.plot(losses[j], marker='o',markersize=2,linewidth=1)
-                plt.xlabel('Model Index')
+                plt.xlabel('Training Round (Model Index)')
                 plt.ylabel('Loss')
                 plt.grid(True)
                 plt.tight_layout()
