@@ -29,12 +29,15 @@ from sklearn.metrics import roc_curve, roc_auc_score
 # ================== 全局配置 ==================
 # 默认模型路径
 VLM_PATHS = {
-    "qwen3":       "./vlm",
-    "qwen3_8b":    "./vlm_8b",
-    "gemma4":      "./gemma4",
-    "llama3.2":    "./llama3.2",
-    "internvl3.5": "./internvl3.5",
-    "llavaov":     "./llavaov",
+    "qwen3":          "./vlm",
+    "qwen3_8b":       "./vlm_8b",
+    "gemma4":         "./gemma4",
+    "llama3.2":       "./llama3.2",
+    "internvl3.5":    "./internvl3.5",
+    "internvl3.5_2b": "./internvl3.5_2b",
+    "smolvlm2":       "./smolvlm2_2.2b",
+    "llavaov":        "./llavaov",
+    "glm4.1v":        "./glm4.1v",
 }
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
@@ -78,8 +81,26 @@ def load_vlm(model_path: str, vlm_type: str):
         model = LlavaOnevisionForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
+    elif vlm_type == "glm4.1v":
+        # GLM-4.1V-9B-Thinking (思考模型, 仅取 logits 无需禁用思考过程)
+        from transformers import Glm4vForConditionalGeneration
+        model = Glm4vForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
+    elif vlm_type == "internvl3.5_2b":
+        # InternVL3.5-2B (与 8B 同架构, 语言骨干为 Qwen3-1.7B)
+        from transformers import InternVLForConditionalGeneration
+        model = InternVLForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
+    elif vlm_type == "smolvlm2":
+        # SmolVLM2-2.2B (基于 Idefics3 / Llama 架构)
+        from transformers import SmolVLMForConditionalGeneration
+        model = SmolVLMForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
     else:
-        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, llavaov")
+        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, internvl3.5_2b, smolvlm2, llavaov, glm4.1v")
 
     return model, processor
 
@@ -196,8 +217,10 @@ class Phase1Screener:
             {"type": "image", "image": os.path.abspath(image_path)},
             {"type": "text", "text": self.prompt}
         ]}]
-        # Qwen3VL / Llama 3.2 / InternVL3.5 有 apply_chat_template
-        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2", "internvl3.5", "llavaov"):
+        # Qwen3VL / Llama 3.2 / InternVL3.5 都有 apply_chat_template
+        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2",
+                             "internvl3.5", "internvl3.5_2b",
+                             "llavaov", "glm4.1v"):
             inputs = self.processor.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
                 return_dict=True, return_tensors="pt"
@@ -210,6 +233,15 @@ class Phase1Screener:
             from PIL import Image
             img = Image.open(os.path.abspath(image_path)).convert("RGB")
             prompt_with_tokens = f"{self.processor.image_token}\n{self.prompt}"
+            inputs = self.processor(
+                text=prompt_with_tokens, images=img, return_tensors="pt"
+            )
+        elif self.vlm_type == "smolvlm2":
+            # SmolVLM2: 手动构建输入, 避免 apply_chat_template 内部 processor.__call__ 的 kwargs 兼容问题
+            from PIL import Image
+            img = Image.open(os.path.abspath(image_path)).convert("RGB")
+            # chat_template 中 image 占位符为 <image>
+            prompt_with_tokens = f"<image>\n{self.prompt}"
             inputs = self.processor(
                 text=prompt_with_tokens, images=img, return_tensors="pt"
             )
@@ -701,7 +733,9 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
     parser.add_argument('--max_samples', type=int, default=1000, help='Max test samples')
     parser.add_argument('--vlm_type', type=str, default='qwen3',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5'],
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2',
+                                 'internvl3.5', 'internvl3.5_2b', 'smolvlm2',
+                                 'llavaov', 'glm4.1v'],
                         help='VLM model type')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='Custom VLM model path (overrides preset)')

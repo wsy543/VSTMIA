@@ -25,7 +25,7 @@ from sklearn.metrics import roc_curve, roc_auc_score
 # ================== 全局配置 ==================
 # 请修改为你的实际模型路径
 
-dataset = 'CIFAR10' #CIFAR10 CIFAR100 tinyimagenet
+dataset = 'CIFAR100' #CIFAR10 CIFAR100 tinyimagenet
 model = 'mobilenet'  #densenet mobilenet resnet
 
 MODEL_PATH_VLM = "./vlm"

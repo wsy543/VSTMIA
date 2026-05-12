@@ -72,7 +72,7 @@ def init_args():
     parser.add_argument('--dataset', type=str, default='STL10',help='CIFAR10 CIFAR100 CINIC10 tinyimagenet 20Newsgroups yahoo OCT EuroSAT STL10 location texas')
     parser.add_argument('--client_num', type=str, default=5)# 20
     parser.add_argument('--data_split',type=str,default='uniform',help = 'uniform dirichlet')
-    parser.add_argument('--model', type=str, default='mobilenet',help='alexnet resnet mobilenet densenet  nn textcnn')
+    parser.add_argument('--model', type=str, default='resnet',help='alexnet resnet mobilenet densenet  nn textcnn')
     parser.add_argument('--save_path', type=str, default='./models')
     
     parser.add_argument('--random_client_mode',type=bool,default= False,help='确定客户端选择方式,随机或者是顺序选择 True是随机')
@@ -87,26 +87,30 @@ def init_args():
     parser.add_argument('--save_client_model_idx',type=int,nargs="+",default=[0,1],help='server save these clients` model')
     parser.add_argument('--arxiv_client',type=int,nargs="+",default=[0,1],help="arxiv2025 need two client for attack")
     parser.add_argument('--data_path', type=str, default='./datas')
-    parser.add_argument('--model_path', type=str, default='./models',help='./models or ./uniform_models')
+    parser.add_argument('--model_path', type=str, default='./models_main',help='./models or ./uniform_models')
     parser.add_argument('-alpha', type=float, default=0.2, help='迪利克雷分布的参数,越大越均匀,TDSC24的论文中说alpha为100时基本均匀')
     
     parser.add_argument('--split_ratio', type=float, default=0.5)
     parser.add_argument('--random_seed', type=int, default=123)
     parser.add_argument('--log_name', type=str, default='train_models')
-    parser.add_argument('-lr',type=float,default=0.001)# mobilenet为0.001，其他网络为0.005，文本为0.01
+    parser.add_argument('-lr',type=float,default=0.005)# mobilenet为0.001，其他网络为0.005，文本为0.01
     parser.add_argument('--steplr',type=bool,default=False) # 图像数据集都没有使用
     parser.add_argument('--lr_gamma',type=float,default=0.99)
     parser.add_argument('--lr_step',type=int,default=1)
     parser.add_argument('--method',type=str,default='ours',help='arxiv,USENIX,fluctuate,arxiv,MBA,enhancedMIA, CSF18 ICLR')
 
-    parser.add_argument('--vlm_type', type=str, default='llama3.2',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2', 'internvl3.5', 'llavaov'],
-                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / llama3.2 / internvl3.5(8B) / llavaov(7B)')
+    parser.add_argument('--vlm_type', type=str, default='qwen3',
+                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2',
+                                 'internvl3.5', 'internvl3.5_2b', 'smolvlm2',
+                                 'llavaov', 'glm4.1v'],
+                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / '
+                             'llama3.2 / internvl3.5(8B) / internvl3.5_2b(2B) / '
+                             'smolvlm2(2.2B) / llavaov(7B) / glm4.1v(9B-思考模型)')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='自定义 VLM 路径, 不指定则用预设路径')
 
     parser.add_argument('--data_process_flag', type=bool, default=False)# 这个开关很危险，慎重！重新对数据进行训练和测试集划分生成full文件
-    parser.add_argument('--train_model', default= False)
+    parser.add_argument('--train_model', type=bool,default=False)
 
     parser.add_argument('--regenerate_plots', default=False, action='store_true',
                         help='是否重新生成 VLM 输入图片, 不加此参数则跳过生成直接攻击')
@@ -165,7 +169,7 @@ if __name__ == '__main__':
         else:
             print("[Skip] 跳过图片生成, 直接使用已有图片进行攻击")
         # 生成完图片后自动运行攻击
-        test.run_attack(dataset=args.dataset, model=args.model, max_samples=1000,
+        test.run_attack(dataset=args.dataset, model=args.model, max_samples=2000,
                         vlm_type=args.vlm_type, vlm_path=args.vlm_path,
                         enable_phase2=args.phase2,
                         alpha_cap=args.physics_alpha_cap,
@@ -173,7 +177,7 @@ if __name__ == '__main__':
                         head_ratio=args.head_ratio,
                         tail_ratio=args.tail_ratio)
     elif args.method == 'arxiv':
-        ours = Arxiv2025(args=args,test_size=500)
+        ours = Arxiv2025(args=args)
         ours.attack()
     elif args.method == 'MBA':
         ours = MBA(args=args)

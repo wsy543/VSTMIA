@@ -19,6 +19,7 @@ import re
 import ssl
 import glob
 from sklearn.preprocessing import LabelEncoder
+import random
 
 # 全局取消证书验证，解决 SSL: CERTIFICATE_VERIFY_FAILED 错误
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -760,6 +761,14 @@ def load_and_process_location(root_dir, save_dir):
     print(f"数据已保存到: {save_path}")
 
 def process_data(args,download=False):
+    # ===== 固定随机种子, 确保数据划分可复现 =====
+    random_seed = getattr(args, 'random_seed', 123)
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(random_seed)
+
     split_ratio = args.split_ratio
     if args.dataset == 'CIFAR10':
         save_path = './datas/CIFAR10'

@@ -21,7 +21,21 @@ import json
 from sklearn.metrics import log_loss
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 from scipy import stats
-from sklearn.metrics import precision_score, f1_score, recall_score, accuracy_score
+from opacus.validators import ModuleValidator
+
+
+def _build_public_model(args):
+    """
+    构建与训练阶段一致的 PublicLayer；如果启用了 DP，就自动修复为 Opacus 兼容结构。
+    这样可以和训练阶段的 GroupNorm 替换保持一致，避免 state_dict 不匹配。
+    """
+    model = PublicLayer(args)
+    if 'DP' in str(getattr(args, 'defence', 'no_defence')):
+        dp_errors = ModuleValidator.validate(model, strict=False)
+        if dp_errors:
+            model = ModuleValidator.fix(model)
+    return model
+
 
 """
 《Comprehensive Privacy Analysis of Deep Learning》
@@ -238,7 +252,7 @@ class SP19:
         for model_file in model_files:
             model_path = os.path.join(model_folder, model_file)
             model_pth = torch.load(model_path)  # 加载模型
-            model = PublicLayer(self.args)
+            model = _build_public_model(self.args)
             model.load_state_dict(model_pth)
             model.to(self.args.device)
             model.eval()
@@ -608,7 +622,7 @@ class USENIX2024:
         self.thre_data_size=50
         self.attack_client_idx = 0
         self.client_dataloader,self.thre_dataloader = self.load_client_dataloader(self.data_size+self.thre_data_size)
-        self.attack_round = self.args.training_round
+        self.attack_round = 300
         # self.public_model_list = self.public_model_loader()
         self.private_model_list = self.private_model_loader(self.attack_client_idx)
         self.public_dataloader = self.load_public_dataloader(data_size=self.data_size)
@@ -622,8 +636,7 @@ class USENIX2024:
         :return: 权重列表
         """
         weights = []
-        step=self.args.client_num//self.args.participant
-        for u in range(1, t + 1,step):
+        for u in range(1, t + 1,self.args.client_num//self.args.participant):
             weight = 6 * (2 * t * u - t**2 + 1) / (t**4 - t**2)
             weights.append(weight)
         return weights
@@ -766,7 +779,15 @@ class USENIX2024:
         non_member_label=np.array(non_member_label)
 
         total_samples = len(label)
-        random_indices = np.random.choice(total_samples, data_size, replace=False)
+        # random_indices = np.random.choice(total_samples, data_size, replace=False)
+        actual_size = min(total_samples, data_size)
+
+        # 2. 如果数据集甚至比 data_size 还小，打印个警告让我们知道
+        if total_samples < data_size:
+            print(f"[Warning] 请求 public_data={data_size}, 但数据集只有 {total_samples}。将使用全部数据。")
+
+        # 3. 使用 actual_size 进行采样
+        random_indices = np.random.choice(total_samples, actual_size, replace=False)
         # 3. 根据随机索引采样数据
         sampled_data1, sampled_label1 = data[random_indices], label[random_indices]
         sampled_data2, sampled_label2 = non_member_data[random_indices], non_member_label[random_indices]
@@ -782,7 +803,6 @@ class USENIX2024:
         模型加载器，将文件夹下面所有的public模型都加载进同一个modulelist中
         :return:
         """
-
         model_folder = self.args.model_path + '/' +self.args.model+'/' + self.args.dataset + '/server_model'
         model_list = nn.ModuleList()
         # model_files = [f for f in os.listdir(model_folder) if f.startswith('sercer_') and f.endswith('./pth')]
@@ -791,7 +811,7 @@ class USENIX2024:
         for model_file in model_files:
             model_path = os.path.join(model_folder, model_file)
             model_pth = torch.load(model_path)  # 加载模型
-            model = PublicLayer(self.args)
+            model = _build_public_model(self.args)
             model.load_state_dict(model_pth)
             model.to(self.args.device)
             model_list.append(model)  # 将模型添加到 ModuleList 中
@@ -815,7 +835,7 @@ class USENIX2024:
         for model_file in model_files:
             model_path = os.path.join(model_folder, model_file)
             model_pth = torch.load(model_path)  # 加载模型
-            model = PublicLayer(self.args)
+            model = _build_public_model(self.args)
             model.load_state_dict(model_pth)
             model.to(self.args.device)
             model.eval()
@@ -910,12 +930,12 @@ class USENIX2024:
         # t_slopes = [-i for i in t_slopes]
         tpr = ROC_AUC_Result_logshow(ground_truth,slopes,False)
         # acc = utils.calculate_acc(slopes,ground_truth,t_slopes,t_ground_truth,'best_acc')
-        metrics=utils.get_best_metrics(ground_truth,slopes)
+        # acc = utils.calculate_acc(slopes,ground_truth,t_slopes,t_ground_truth,'percentile',75,reverse=True)
         # print('confidence:')
         # slopes = self.compute_slopes(conf, self.attack_round)
         # tpr = ROC_AUC_Result_logshow(ground_truth,slopes,False)
 
-        # self.plot_histograms(slopes,ground_truth)
+        self.plot_histograms(slopes,ground_truth)
         return tpr
     
     
@@ -958,6 +978,7 @@ class USENIX2024:
         # 显示图形
         plt.cla()
 
+        
 
 class ICLR2023:
     """
@@ -971,10 +992,10 @@ class ICLR2023:
         self.attack_client_idx = attack_client_idx
         self.device = args.device
         self.data_size = total_eval_size
-        
+
         # 1. 实例化一个模型模板 (用于加载权重计算梯度)
         # 请确保 TargetModel 是你训练时使用的那个包含所有层的类
-        self.model_template = PublicLayer(args).to(self.device)
+        self.model_template = _build_public_model(args).to(self.device)
         
         # 2. 准备数据
         self.client_dataloader= self.load_client_dataloader(total_eval_size)
@@ -1194,29 +1215,26 @@ class ICLR2023:
             eval_gt.extend(m.numpy())
         eval_gt = np.array(eval_gt)
         auc = ROC_AUC_Result_logshow(eval_gt, final_eval_scores,True) # 注意：sklearn需要(y_true, y_score)
-        metrics = utils.get_best_metrics(eval_gt, final_eval_scores)
         return auc
+    
 
 class Arxiv2025:
-    def __init__(self,args,test_size):
+    def __init__(self,args):
         self.args = args
-        self.test_size=test_size
         self.MODE = 'test'
         self.attack_modes=["cosine attack","grad diff","loss based","grad norm"]
-        self.epochs=list(range(4,self.args.training_round,self.args.client_num//self.args.participant))
+        self.epochs=list(range(self.args.client_num//self.args.participant,self.args.training_round,self.args.client_num//self.args.participant))
         self.p_folder=args.model_path + '/' + args.model+'/'+ args.dataset + '/our_model/arxiv/'
         self.PATH=self.p_folder+"/client_{}_round_{}.pkl"
         self.p=self.PATH
         self.save_dir='log_file/'+args.model+'/'+args.dataset+'/'+'arxiv/'
         self.device = self.args.device
         self.SEED = args.random_seed
-        self.MAX_K=20
+        self.MAX_K=10
         self.mix_length = 1800
         self.select_mode=1 #or 1
         self.select_method='outlier' # outlier
         self.SHADOW_NUM=4 # OR 4
-
-        self.data_size=500
         path_exists(self.save_dir)
 
     @ torch.no_grad()
@@ -1305,6 +1323,7 @@ class Arxiv2025:
         training_res=[]
         for i in range(K):
             filepath = f.format(i, epch)
+            print(filepath)
             if os.path.exists(filepath):
                 training_res.append(torch.load(filepath))
             # 否则静默跳过
@@ -1444,13 +1463,12 @@ class Arxiv2025:
             test_var_out=shadow_test_losses_stack.std(axis=0)+1e-8
 
 
-        train_l_out=scipy.stats.norm.cdf(target_train_loss,train_mu_out,train_var_out)[:self.data_size]
-        test_l_out=scipy.stats.norm.cdf(target_test_loss,test_mu_out,test_var_out)[:self.data_size]
+        train_l_out=scipy.stats.norm.cdf(target_train_loss,train_mu_out,train_var_out)
+        test_l_out=scipy.stats.norm.cdf(target_test_loss,test_mu_out,test_var_out)
         # auc,log_auc,tprs=self.plot_auc("lira",torch.tensor(test_l_out),torch.tensor(train_l_out),epch)
         result = list(np.concatenate((train_l_out,test_l_out),axis=0))
         gt = [1]*train_l_out.shape[0]+[0]*test_l_out.shape[0]
         auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,result,True)
-        metircs= utils.get_best_metrics(gt,result)
         # return accs,tprs,auc,log_auc,(train_l_out,test_l_out)
         return auc,tpr,(train_l_out,test_l_out)
 
@@ -1618,22 +1636,22 @@ class Arxiv2025:
             single_score[attack_mode]=(scores[attack_mode][sorted_id[0]])
             single_score[f'single {attack_mode}_auc'] = auc_dict[attack_mode][sorted_id[0]]
 
-        # print('------------ ----------------- -------------  ')
-        # print('------------ ---Best attack--- -------------  ')
-        # print('------------ ----------------- -------------  ')
+        print('------------ ----------------- -------------  ')
+        print('------------ ---Best attack--- -------------  ')
+        print('------------ ----------------- -------------  ')
 
-        # for attack_mode in ['lira', 'lira_loss']:
-        #     auc = single_score[f'single {attack_mode}_auc']
-        #     tpr = single_score[attack_mode]
-        #     print(f'Best {attack_mode} auc:{auc}\ntpr:{tpr}')
-        # for attack_mode in self.attack_modes:
-        #     auc = single_score[f'single {attack_mode}_auc']
-        #     tpr = single_score[attack_mode]
-        #     print(f'Best {attack_mode} auc:{auc}\ntpr:{tpr}')
+        for attack_mode in ['lira', 'lira_loss']:
+            auc = single_score[f'single {attack_mode}_auc']
+            tpr = single_score[attack_mode]
+            print(f'Best {attack_mode} auc:{auc}\ntpr:{tpr}')
+        for attack_mode in self.attack_modes:
+            auc = single_score[f'single {attack_mode}_auc']
+            tpr = single_score[attack_mode]
+            print(f'Best {attack_mode} auc:{auc}\ntpr:{tpr}')
         
-        # print('------------ ----------------- -------------  ')
-        # print('------------ Sequential attack -------------  ')
-        # print('------------ ----------------- -------------  ')
+        print('------------ ----------------- -------------  ')
+        print('------------ Sequential attack -------------  ')
+        print('------------ ----------------- -------------  ')
 
         reses=reses_lira
         train_score=np.vstack([ i[0].reshape(1,-1) for i in reses]).mean(axis=0)
@@ -1643,7 +1661,7 @@ class Arxiv2025:
         auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,scores,True)
         if auc<0.5:
             auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,scores,False)
-        # print(f"averaged_lira_grad tprs:{tpr} \n auc:{auc}")
+        print(f"averaged_lira_grad tprs:{tpr} \n auc:{auc}")
         avg_scores["lira"]=tpr
         other_scores["lira_auc"]=[auc]
 
@@ -1652,40 +1670,39 @@ class Arxiv2025:
         train_score=np.vstack([ i[0].reshape(1,-1) for i in reses]).mean(axis=0)
         test_score=np.vstack([ i[1].reshape(1,-1) for i in reses]).mean(axis=0)
 
-        train_fscore=train_score[0:self.test_size]
-        test_fscore=test_score[0:self.test_size]
+        train_fscore=train_score[0:300]
+        test_fscore=test_score[0:300]
 
-
+        train_vscore=train_score[300:350]
+        test_vscore=test_score[300:350]
 
         scores = np.concatenate((train_fscore,test_fscore),axis=0)
-        gt = [1]*train_fscore.shape[0]+[0]*train_fscore.shape[0]
-
-        print("*************FedMIA***************")
+        v_scores = np.concatenate((train_vscore,test_vscore),axis=0)
+        gt = [1]*train_fscore.shape[0]+[0]*test_fscore.shape[0]
+        v_gt=[1]*train_vscore.shape[0]+[0]*test_vscore.shape[0]
         auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,scores,False)
-        utils.plot_log_roc(gt,scores,name='FedMIA.png')
-        # if auc<0.5:
-        #     auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,scores,False)
+        if auc<0.5:
+            auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,scores,False)
         print(f"averaged_lira_loss tprs:{tpr} \n auc:{auc}")
-        metircs= utils.get_best_metrics(gt,scores)
         # acc = utils.calculate_acc(scores,gt,v_scores,v_gt,'percentile',75)
         avg_scores["lira_loss"]=tpr
         other_scores["lira_loss_auc"]=[auc]
 
 
-        # reses=reses_common["cosine attack"]
-        # # print(reses)
-        # # print(len(reses),len(reses[0]))
-        # # assert 0
-        # train_score=np.vstack([ i[0] for i in reses]).mean(axis=0)
-        # test_score=np.vstack([ i[1] for i in reses]).mean(axis=0)
+        reses=reses_common["cosine attack"]
+        # print(reses)
+        # print(len(reses),len(reses[0]))
+        # assert 0
+        train_score=np.vstack([ i[0] for i in reses]).mean(axis=0)
+        test_score=np.vstack([ i[1] for i in reses]).mean(axis=0)
 
-        # train_fscore=train_score[0:300]
-        # test_fscore=test_score[0:300]
+        train_fscore=train_score[0:300]
+        test_fscore=test_score[0:300]
 
-        # train_vscore=train_score[300:350]
-        # test_vscore=test_score[300:350]
+        train_vscore=train_score[300:350]
+        test_vscore=test_score[300:350]
 
-        # print('***********COS_MIA************')
+        # print('***********check avg cos attack:')
         # scores = np.concatenate((train_fscore,test_fscore),axis=0)
         # v_scores = np.concatenate((train_vscore,test_vscore),axis=0)
         # gt = [1]*train_fscore.shape[0]+[0]*test_fscore.shape[0]
@@ -1809,7 +1826,7 @@ class MBA:
         self.attack_client_idx=0
         self.client_model=self.load_client_model()
         self.server_model = self.load_server_model()
-        self.data_size=300
+        self.data_size=1000
         self.thre_data_size=50
         self.client_dataloader,self.thre_dataloader = self.load_client_dataloader(self.data_size+self.thre_data_size)
         self.other_dataloader = self.load_otherloader(data_size=self.data_size)
@@ -1818,10 +1835,10 @@ class MBA:
         model_folder = self.args.model_path + '/' +self.args.model+'/' + self.args.dataset + '/client_model'
         # model_files = [f for f in os.listdir(model_folder) if f.startswith('sercer_') and f.endswith('./pth')]
         # model_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
-        model_file = f"client_{self.attack_client_idx}_{self.args.training_round-4}.pth"
+        model_file = f"client_{self.attack_client_idx}_{self.args.training_round-self.args.client_num//self.args.participant}.pth"
         model_path = os.path.join(model_folder, model_file)
         model_pth = torch.load(model_path)  # 加载模型
-        model = PublicLayer(self.args)
+        model = _build_public_model(self.args)
         model.load_state_dict(model_pth)
         model.to(self.args.device)
         print(f'load model {model_file}')
@@ -1832,7 +1849,7 @@ class MBA:
         model_file = f"server_{self.args.training_round-1}.pth"
         model_path = os.path.join(model_folder, model_file)
         model_pth = torch.load(model_path)  # 加载模型
-        model = PublicLayer(self.args)
+        model = _build_public_model(self.args)
         model.load_state_dict(model_pth)
         model.to(self.args.device)
         print(f'load model {model_file}')
@@ -1954,7 +1971,16 @@ class MBA:
         member_total_samples = len(label)
         min_number = min(nonmember_total_samples,member_total_samples)
         random.seed(self.args.random_seed)
-        random_indices = np.random.choice(min_number, data_size, replace=False)
+        # random_indices = np.random.choice(min_number, data_size, replace=False)
+        # 1. 计算实际能取的最大数量
+        actual_size = min(member_total_samples, data_size)
+
+        # 2. 如果数据集甚至比 data_size 还小，打印个警告让我们知道
+        if member_total_samples < data_size:
+            print(f"[Warning] 请求 public_data={data_size}, 但数据集只有 {member_total_samples}。将使用全部数据。")
+
+        # 3. 使用 actual_size 进行采样
+        random_indices = np.random.choice(member_total_samples, actual_size, replace=False)
         sampled_data,sampled_label = data[random_indices],label[random_indices]
         sampled_data_n, sampled_label_n = non_member_data[random_indices], non_member_label[random_indices]
         sampled_data = np.concatenate((sampled_data, sampled_data_n))
@@ -2066,8 +2092,8 @@ class MBA:
         print(f'attack type:{metric_flag},attack Perspective:server')
         tpr = ROC_AUC_Result_logshow(ground_truth,metrics,False)
         tpr = ROC_AUC_Result_logshow(ground_truth,metrics,True)
-        metrics = utils.get_best_metrics(ground_truth,metrics)
-
+        acc = utils.calculate_acc(metrics,ground_truth,t_metrics,t_ground_truth,'best_acc')
+        acc = utils.calculate_acc(metrics,ground_truth,t_metrics,t_ground_truth,'percentile',75)
 
 
     def attack_client(self,metric_flag):
@@ -2108,7 +2134,7 @@ class EnhancedMIA:
         model_file = f"client_{self.attack_client_idx}_{self.args.training_round-4}.pth"
         model_path = os.path.join(model_folder, model_file)
         model_pth = torch.load(model_path)  # 加载模型
-        model = PublicLayer(self.args)
+        model = _build_public_model(self.args)
         model.load_state_dict(model_pth)
         model.to(self.args.device)
         print(f'load model {model_file}')
@@ -2119,7 +2145,7 @@ class EnhancedMIA:
         model_file = f"server_{self.args.training_round-1}.pth"
         model_path = os.path.join(model_folder, model_file)
         model_pth = torch.load(model_path)  # 加载模型
-        model = PublicLayer(self.args)
+        model = _build_public_model(self.args)
         model.load_state_dict(model_pth)
         model.to(self.args.device)
         print(f'load model {model_file}')
@@ -2348,7 +2374,7 @@ class CSF18:
         self.args=args
         self.attack_client_idx=0
         self.client_model=self.load_client_model()
-        self.data_size=300
+        self.data_size=1000
         self.client_dataloader = self.load_client_dataloader(data_size=self.data_size)
 
     def load_client_dataloader(self, data_size):
@@ -2400,10 +2426,10 @@ class CSF18:
         model_folder = self.args.model_path + '/' +self.args.model+'/' + self.args.dataset + '/client_model'
         # model_files = [f for f in os.listdir(model_folder) if f.startswith('sercer_') and f.endswith('./pth')]
         # model_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
-        model_file = f"client_{self.attack_client_idx}_{self.args.training_round-4}.pth"
+        model_file = f"client_{self.attack_client_idx}_{self.args.training_round-self.args.client_num//self.args.participant}.pth"
         model_path = os.path.join(model_folder, model_file)
         model_pth = torch.load(model_path)  # 加载模型
-        model = PublicLayer(self.args)
+        model = _build_public_model(self.args)
         model.load_state_dict(model_pth)
         model.to(self.args.device)
         print(f'load model {model_file}')
@@ -2458,255 +2484,9 @@ class CSF18:
         
         auc,tpr=ROC_AUC_Result_logshow_with_auc(true_memberships,all_scores,False)
         acc=accuracy_score(true_memberships,all_scores)
-        precision = precision_score(true_memberships,all_scores, zero_division=0)
-        recall = recall_score(true_memberships,all_scores, zero_division=0)
-        f1 = f1_score(true_memberships,all_scores, zero_division=0)
-
-        print(f"--- Evaluation Metrics ---")
-        print(f"Accuracy : {acc:.4f}")
-        print(f"Precision: {precision:.4f}")
-        print(f"Recall   : {recall:.4f}")
-        print(f"F1-Score : {f1:.4f}")
+        print(f"acc:{acc}")
 
         return {
             "scores": all_scores,       # 攻击得分 (Loss)
             "labels": true_memberships  # 真实标签 (1=Member, 0=Non-Member)
         }
-    
-
-class ICLR2023:
-    """
-    全历史 ICLR2023 攻击 (针对完整模型保存版)
-    
-    [cite_start]Paper Reference: [cite: 194-203] "Attacks using multiple communication rounds"
-    """
-
-    def __init__(self, args, attack_client_idx, total_eval_size=600):
-        self.args = args
-        self.attack_client_idx = attack_client_idx
-        self.device = args.device
-        self.data_size = total_eval_size
-        
-        # 1. 实例化一个模型模板 (用于加载权重计算梯度)
-        # 请确保 TargetModel 是你训练时使用的那个包含所有层的类
-        self.model_template = PublicLayer(args).to(self.device)
-        
-        # 2. 准备数据
-        self.client_dataloader= self.load_client_dataloader(total_eval_size)
-        self.eval_loader = self.client_dataloader
-        
-        self.eval_scores_sum = np.zeros(len(self.eval_loader.dataset))
-
-    def load_client_dataloader(self, data_size):
-        """
-        数据加载
-        数据来源是攻击者控制的0号客户端，使用训练集和测试集构建成员和非成员作为训练集。
-        """
-        args = self.args
-        random.seed(self.args.random_seed)
-
-        # 加载训练数据和测试数据
-        data_path = args.data_path + '/'+args.dataset+'/'+args.model+'/'+args.data_split
-        datas, labels = load_npz_data(data_path + '/train_non_iid.npz')
-        non_member_data, non_member_label = load_npz_data(data_path + '/test_non_iid.npz')
-
-        # 生成随机索引
-        all_indices = np.arange(len(datas[self.attack_client_idx]))  # 获取所有的索引
-        random.shuffle(all_indices)  # 打乱索引
-        sampled_indices1 = all_indices[:int(data_size)]  # 从训练数据中采样
-        sampled_indices2 = all_indices[:int(data_size)]  # 从非成员测试数据中采样
-
-        # 使用索引提取数据和标签
-        sampled_data1 = datas[self.attack_client_idx][sampled_indices1]
-        sampled_label1 = labels[self.attack_client_idx][sampled_indices1]
-        sampled_data2 = non_member_data[self.attack_client_idx][sampled_indices2]
-        sampled_label2 = non_member_label[self.attack_client_idx][sampled_indices2]
-
-        # 确保标签和数据的长度匹配
-        assert len(sampled_data1) == len(sampled_label1), "Sampled data and labels are mismatched!"
-        assert len(sampled_data2) == len(sampled_label2), "Sampled data and labels are mismatched!"
-
-        # 创建成员性标签
-        membership = [1] * len(sampled_data1) + [0] * len(sampled_data2)
-        data = np.concatenate((sampled_data1, sampled_data2))
-        label = np.concatenate((sampled_label1, sampled_label2))
-
-        # 确保数据与标签的维度一致
-        assert len(data) == len(label), "Data and labels have mismatched lengths!"
-
-        # 构建数据集
-        dataset = ClientDatasetWithMember(data, label, membership)
-
-        # 为了方便测试设置batch=1
-        dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
-
-        return dataloader
-
-    def load_models_and_get_update(self, round_idx):
-        """
-        加载第 round_idx 轮的模型，并计算 ΔΓ = W_client - W_server
-        """
-        # 路径构建 (请根据你实际的保存路径修改)
-        # Server Model Path
-        server_path = os.path.join(
-            self.args.model_path, self.args.model, self.args.dataset, 
-            'server_model', f'server_{round_idx}.pth'
-        )
-        
-        # Client Model Path (名字没改，指向 client_model 文件夹)
-        # 假设文件名格式是 client_{idx}_{round}.pth
-        client_path = os.path.join(
-            self.args.model_path, self.args.model, self.args.dataset, 
-            'client_model', f'client_{self.attack_client_idx}_{round_idx}.pth'
-        )
-        
-        # 检查文件是否存在
-        if not os.path.exists(server_path):
-            raise FileNotFoundError(f"Server model not found: {server_path}")
-        if not os.path.exists(client_path):
-            # 如果这轮该客户端没参与训练，可能就没有文件
-            raise FileNotFoundError(f"Client model not found: {client_path}")
-
-        try:
-            # 1. 加载 Global Model (W_S)
-            # 使用 model_template 加载权重
-            server_state = torch.load(server_path, map_location=self.device)
-            self.model_template.load_state_dict(server_state)
-            self.model_template.eval()
-            
-            # 将 Global Model 参数展平为向量
-            # 必须 detach，否则会占用计算图内存
-            server_vec = nn.utils.parameters_to_vector(self.model_template.parameters()).detach()
-            
-            # 2. 加载 Client Model (W_C)
-            # 为了计算差值，我们需要临时加载 Client 权重
-            client_state = torch.load(client_path, map_location=self.device)
-            
-            # 这里有个技巧：我们不需要实例化两个模型对象。
-            # 我们可以先加载 Server 算完 vector，再加载 Client 算 vector。
-            # 但为了后续计算梯度，我们需要保留 Server Model 的状态在 self.model_template 中。
-            
-            # 所以，先用一个临时变量或者重新 load 一次来获取 Client Vector
-            self.model_template.load_state_dict(client_state)
-            client_vec = nn.utils.parameters_to_vector(self.model_template.parameters()).detach()
-            
-            # 3. 计算 ΔΓ (Update Vector)
-            # ΔΓ = W_client - W_server
-            delta_gamma = client_vec - server_vec
-            
-            # 4. 恢复 self.model_template 为 Server Model
-            # 因为论文攻击是计算样本在 Global Model 上的梯度 ∇L(x; W_S)
-            self.model_template.load_state_dict(server_state)
-            
-            return self.model_template, delta_gamma
-
-        except RuntimeError as e:
-            print(f"[Load Error] 模型结构不匹配或显存不足: {e}")
-            return None, None
-
-    def compute_scores_for_loader(self, loader, model, update_vec):
-        """
-        计算 loader 中所有样本的梯度与 update_vec 的余弦相似度
-        """
-        scores = []
-        update_vec_np = update_vec.cpu().numpy()
-        norm_update = np.linalg.norm(update_vec_np)
-        
-        if norm_update == 0:
-            return np.zeros(len(loader.dataset))
-
-        criterion = nn.CrossEntropyLoss()
-
-        # 遍历数据
-        for data, target, _ in loader:
-            # 针对 Batch 中的每个样本单独计算梯度 (Per-sample gradient)
-            # 这非常慢，但符合论文定义。如果显存够大，可以尝试 Opacus 库加速。
-            for i in range(len(data)):
-                img = data[i:i+1].to(self.device)
-                lbl = target[i:i+1].to(self.device)
-                
-                # 清空梯度
-                model.zero_grad()
-                
-                # 开启梯度记录 (哪怕是 eval 模式)
-                for p in model.parameters(): 
-                    p.requires_grad = True
-                
-                # Forward
-                out = model(img)
-                loss = criterion(out, lbl)
-                
-                # Backward
-                loss.backward()
-                
-                # 提取完整模型的梯度并展平
-                grads = []
-                for param in model.parameters():
-                    if param.grad is not None:
-                        grads.append(param.grad.view(-1))
-                
-                if len(grads) > 0:
-                    grad_vec = torch.cat(grads).detach().cpu().numpy()
-                    norm_grad = np.linalg.norm(grad_vec)
-                    
-                    if norm_grad == 0:
-                        scores.append(0.0)
-                    else:
-                        # 计算余弦相似度
-                        sim = np.dot(grad_vec, update_vec_np) / (norm_grad * norm_update)
-                        scores.append(sim)
-                else:
-                    scores.append(0.0)
-                    
-        return np.array(scores)
-
-    def attack(self):
-        """
-        执行攻击主循环
-        """
-        start_round = 0 
-        end_round = self.args.training_round
-        valid_rounds = 0
-        
-        print(f"Starting Attack on WHOLE models ({start_round} -> {end_round})...")
-
-        # 步长可调整，比如每隔几轮采一次样以节省时间
-        step = self.args.client_num//self.args.participant
-
-            
-        for r in tqdm(range(start_round, end_round, step), desc="Attacking Rounds"):
-            try:
-                # 1. 加载模型并计算差值
-                model, delta_gamma = self.load_models_and_get_update(r)
-                
-                if model is None: continue 
-                
-                
-                # 3. 计算 Evaluation Set 分数
-                eval_scores = self.compute_scores_for_loader(self.eval_loader, model, delta_gamma)
-                self.eval_scores_sum += eval_scores
-                
-                valid_rounds += 1
-                
-            except FileNotFoundError:
-                # print(f"Round {r} files not found, skipping.")
-                continue
-            except Exception as e:
-                print(f"Error in round {r}: {e}")
-                continue
-
-        if valid_rounds == 0:
-            print("Error: No valid rounds found!")
-            return 0
-
-        # --- 计算平均分 ---
-        final_eval_scores = self.eval_scores_sum / valid_rounds
-
-
-        # 提取 Ground Truth (假设 loader 里的 member 标签是第三个返回值)
-        eval_gt = []
-        for _, _, m in self.eval_loader:
-            eval_gt.extend(m.numpy())
-        eval_gt = np.array(eval_gt)
-        auc = ROC_AUC_Result_logshow(eval_gt, final_eval_scores,True) # 注意：sklearn需要(y_true, y_score)
-        return auc
