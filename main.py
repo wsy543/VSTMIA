@@ -93,7 +93,7 @@ def init_args():
     parser.add_argument('--split_ratio', type=float, default=0.5)
     parser.add_argument('--random_seed', type=int, default=123)
     parser.add_argument('--log_name', type=str, default='train_models')
-    parser.add_argument('-lr',type=float,default=0.005)# mobilenet为0.001，其他网络为0.005，文本为0.01
+    parser.add_argument('--lr',type=float,default=0.005)# mobilenet为0.001，其他网络为0.005，文本为0.01
     parser.add_argument('--steplr',type=bool,default=False) # 图像数据集都没有使用
     parser.add_argument('--lr_gamma',type=float,default=0.99)
     parser.add_argument('--lr_step',type=int,default=1)
@@ -136,6 +136,21 @@ def init_args():
     parser.add_argument('--plot_dpi', type=int, default=150,
                         help='图片分辨率 DPI, 默认 150')
     # qwen3是 (6.22, 2.67)
+
+    # ========== 防御参数 ==========
+    parser.add_argument('--defence', type=str, default='none',
+                        choices=['none', 'dpsgd', 'mixupmmd', 'l2'],
+                        help='选择防御方法: none / dpsgd / mixupmmd / l2, 默认不启用')
+    parser.add_argument('--dp_clip_norm', type=float, default=100.0,
+                        help='DP-SGD 梯度裁剪阈值, 默认 100.0 (宽松保收敛, 需隐私保护请调低)')
+    parser.add_argument('--dp_noise_multiplier', type=float, default=0.001,
+                        help='DP-SGD 噪声乘数, 默认 0.001 (保收敛, 需隐私保护请调高)')
+    parser.add_argument('--mixup_alpha', type=float, default=0.2,
+                        help='MixupMMD 的 Beta 分布 alpha 参数, 默认 0.2')
+    parser.add_argument('--mmd_lambda', type=float, default=0.01,
+                        help='MixupMMD 的 MMD 正则化权重, 默认 0.01')
+    parser.add_argument('--l2_lambda', type=float, default=0.001,
+                        help='L2 正则化系数 (weight_decay), 默认 0.001 (收敛推荐)')
 
     parser.add_argument('--arxiv_save',type=bool,default=True)
     return parser.parse_args()

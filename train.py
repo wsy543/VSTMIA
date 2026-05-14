@@ -14,6 +14,7 @@ from utils import path_exists
 import torch.nn.functional as F
 from opacus import PrivacyEngine
 from torch.func import grad, vmap
+from defence import DefenceManager
 
 # 在功能文件中获取 logger
 import logging
@@ -33,6 +34,9 @@ class FederatedLearning:
 
         
         self.train_data, self.train_label, self.test_data, self.test_label = self.split_train_test_data(True,self.datas,self.labels,self.args.split_ratio)
+
+        # 初始化防御管理器
+        self.defence_manager = DefenceManager(args)
 
     # def split_data(self, args, path):
     #     data, label = load_npz_data(path)
@@ -375,11 +379,13 @@ class FederatedLearning:
                 for param in client_model.parameters():
                     param.requires_grad = True
                 # before_update_params = {name: param.clone() for name, param in client_model.named_parameters()}
+                optim_kwargs = self.defence_manager.get_optimizer_kwargs()
                 if args.optimizer == 'Adam':
                     optimizer = optim.Adam(
                         client_model.parameters(),
                         lr=lr,
-                        betas=(0.9, 0.999)
+                        betas=(0.9, 0.999),
+                        **optim_kwargs
                     )
 
                 elif args.optimizer == 'SGD':
@@ -387,7 +393,7 @@ class FederatedLearning:
                         client_model.parameters(),
                         lr=lr,
                         momentum=0.9,
-                        weight_decay=1e-4   
+                        weight_decay=optim_kwargs.get('weight_decay', 1e-4)
                     )
                 else:
                     logging.warning('optimizer is wrong')
@@ -402,9 +408,25 @@ class FederatedLearning:
                         optimizer.zero_grad()
                         data = data.to(device)
                         label = label.to(device)
-                        outputs = client_model(data)
-                        loss = loss_fn(outputs, label)
+                        
+                        # --- 防御: 前向预处理 (Mixup) ---
+                        proc_data, proc_label, defence_extra = self.defence_manager.on_before_forward(
+                            client_model, data, label
+                        )
+                        
+                        outputs = client_model(proc_data)
+                        loss = loss_fn(outputs, proc_label if isinstance(proc_label, torch.Tensor) else proc_label[0])
+                        
+                        # --- 防御: 损失后处理 (MixupMMD) ---
+                        loss = self.defence_manager.on_after_loss(
+                            client_model, proc_data, proc_label, outputs, loss, defence_extra
+                        )
+                        
                         loss.backward()
+                        
+                        # --- 防御: 梯度后处理 (DP-SGD) ---
+                        self.defence_manager.on_after_backward(client_model)
+                        
                         optimizer.step()
                         _, predicted = torch.max(outputs, 1)  # 获取最大值的索引（预测类别）
                         total += label.size(0)  # 样本总数VGG
