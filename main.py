@@ -70,7 +70,7 @@ def init_logging(args):
 def init_args():
     parser = argparse.ArgumentParser(description='VLMFLMIA parameters')
     parser.add_argument('--dataset', type=str, default='STL10',help='CIFAR10 CIFAR100 CINIC10 tinyimagenet 20Newsgroups yahoo OCT EuroSAT STL10 location texas')
-    parser.add_argument('--client_num', type=str, default=5)# 20
+    parser.add_argument('--client_num', type=int, default=5)# 20
     parser.add_argument('--data_split',type=str,default='uniform',help = 'uniform dirichlet')
     parser.add_argument('--model', type=str, default='resnet',help='alexnet resnet mobilenet densenet  nn textcnn')
     parser.add_argument('--save_path', type=str, default='./models')
@@ -83,7 +83,7 @@ def init_args():
     parser.add_argument('--training_round', type=int, default=200, help='模型总的训练轮数')# 200
     parser.add_argument('--participant', type=int, default=5, help='每一轮的参与者数量')
     parser.add_argument('--attacker_client_idx',type=int,default=0)
-    parser.add_argument('--collusion_client_idx',type=int,nargs="+",default=[1,2,3])
+    parser.add_argument('--collusion_client_idx',type=int,nargs="+",default=[1,2])
     parser.add_argument('--save_client_model_idx',type=int,nargs="+",default=[0,1],help='server save these clients` model')
     parser.add_argument('--arxiv_client',type=int,nargs="+",default=[0,1],help="arxiv2025 need two client for attack")
     parser.add_argument('--data_path', type=str, default='./datas')
@@ -102,10 +102,11 @@ def init_args():
     parser.add_argument('--vlm_type', type=str, default='qwen3',
                         choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2',
                                  'internvl3.5', 'internvl3.5_2b', 'smolvlm2',
-                                 'llavaov', 'glm4.1v'],
+                                 'llavaov', 'glm4.1v', 'glm4.1vbase', 'ovis2.5'],
                         help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / '
                              'llama3.2 / internvl3.5(8B) / internvl3.5_2b(2B) / '
-                             'smolvlm2(2.2B) / llavaov(7B) / glm4.1v(9B-思考模型)')
+                             'smolvlm2(2.2B) / llavaov(7B) / glm4.1v(9B-思考模型) / '
+                             'glm4.1vbase(9B-基础模型) / ovis2.5(2B)')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='自定义 VLM 路径, 不指定则用预设路径')
 

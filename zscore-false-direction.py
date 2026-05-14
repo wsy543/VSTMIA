@@ -24,12 +24,7 @@ from sklearn.metrics import roc_curve, roc_auc_score
 
 # ================== 全局配置 ==================
 # 请修改为你的实际模型路径
-MODEL_PATH_VLM = "./vlm"
-MODEL_PATH_LLM = "./llm"
-LOSS_PLOT_BASE = "./plot/vlm_data/resnet/CIFAR10/"
-LOSS_HISTORY_PATH = "./plot/vlm_data/resnet/CIFAR10/metrics_history_selected.pkl"
-REPORT_OUTPUT_DIR = "./reports_lira_lite"
-RANDOM_SEED = 42
+
 
 
 # ================== 核心：物理动力学工具箱 ==================

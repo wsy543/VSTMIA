@@ -38,6 +38,8 @@ VLM_PATHS = {
     "smolvlm2":       "./smolvlm2_2.2b",
     "llavaov":        "./llavaov",
     "glm4.1v":        "./glm4.1v",
+    "glm4.1vbase":    "./glm4.1vbase",
+    "ovis2.5":        "./ovis2.52b",
 }
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
@@ -87,6 +89,12 @@ def load_vlm(model_path: str, vlm_type: str):
         model = Glm4vForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
+    elif vlm_type == "glm4.1vbase":
+        # GLM-4.1V-9B-Base (与 Thinking 版同架构 Glm4vForConditionalGeneration)
+        from transformers import Glm4vForConditionalGeneration
+        model = Glm4vForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
     elif vlm_type == "internvl3.5_2b":
         # InternVL3.5-2B (与 8B 同架构, 语言骨干为 Qwen3-1.7B)
         from transformers import InternVLForConditionalGeneration
@@ -99,8 +107,15 @@ def load_vlm(model_path: str, vlm_type: str):
         model = SmolVLMForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
+    elif vlm_type == "ovis2.5":
+        # Ovis2.5-2B (NaViT + Qwen3-1.7B, 自定义 modeling 代码)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
+        )
+        # Ovis2.5 使用模型的 text_tokenizer 作为 processor
+        processor = model.text_tokenizer
     else:
-        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, internvl3.5_2b, smolvlm2, llavaov, glm4.1v")
+        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, internvl3.5_2b, smolvlm2, llavaov, glm4.1v, glm4.1vbase, ovis2.5")
 
     return model, processor
 
@@ -220,7 +235,7 @@ class Phase1Screener:
         # Qwen3VL / Llama 3.2 / InternVL3.5 都有 apply_chat_template
         if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2",
                              "internvl3.5", "internvl3.5_2b",
-                             "llavaov", "glm4.1v"):
+                             "llavaov", "glm4.1v", "glm4.1vbase"):
             inputs = self.processor.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
                 return_dict=True, return_tensors="pt"
@@ -245,14 +260,47 @@ class Phase1Screener:
             inputs = self.processor(
                 text=prompt_with_tokens, images=img, return_tensors="pt"
             )
+        elif self.vlm_type == "ovis2.5":
+            # Ovis2.5: 使用 model.preprocess_inputs 处理多模态输入
+            # processor 实际是 model.text_tokenizer, 需通过 self.model 访问
+            from PIL import Image
+            img = Image.open(os.path.abspath(image_path)).convert("RGB")
+            ovis_messages = [{"role": "user", "content": [
+                {"type": "image", "image": img},
+                {"type": "text", "text": self.prompt}
+            ]}]
+            input_ids, pixel_values, grid_thws = self.model.preprocess_inputs(
+                messages=ovis_messages,
+                add_generation_prompt=True
+            )
+            input_ids = input_ids.to(self.model.device)
+            pixel_values = pixel_values.to(self.model.device) if pixel_values is not None else None
+            grid_thws = grid_thws.to(self.model.device) if grid_thws is not None else None
+            attention_mask = torch.ne(
+                input_ids, self.model.text_tokenizer.pad_token_id
+            ).to(device=input_ids.device)
+            inputs = {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "pixel_values": pixel_values,
+                "grid_thws": grid_thws,
+            }
         else:
             raise ValueError(f"Unknown vlm_type: {self.vlm_type}")
+        # Ovis2.5 返回的是 dict, 已在构建时 moved to device, 无需 .to()
+        if self.vlm_type == "ovis2.5":
+            return inputs
         return inputs.to(self.model.device)
 
     def scan(self, samples: List[Sample]) -> Dict[int, float]:
         scores = {}
-        token_id_1 = self.processor.tokenizer.encode("1", add_special_tokens=False)[0]
-        token_id_0 = self.processor.tokenizer.encode("0", add_special_tokens=False)[0]
+        # Ovis2.5 的 processor 实际是 text_tokenizer, 没有 .tokenizer 属性
+        if self.vlm_type == "ovis2.5":
+            token_id_1 = self.processor.encode("1", add_special_tokens=False)[0]
+            token_id_0 = self.processor.encode("0", add_special_tokens=False)[0]
+        else:
+            token_id_1 = self.processor.tokenizer.encode("1", add_special_tokens=False)[0]
+            token_id_0 = self.processor.tokenizer.encode("0", add_special_tokens=False)[0]
 
         print(f"[Phase 1] Screening {len(samples)} samples...")
         for s in tqdm(samples):
@@ -701,7 +749,7 @@ def run_attack(dataset: str, model: str, max_samples: int = 1000,
     :param dataset: 数据集名称, 如 'CIFAR10', 'CIFAR100', 'STL10' 等
     :param model: 模型名称, 如 'mobilenet', 'densenet', 'resnet' 等
     :param max_samples: 最多测试的样本数
-    :param vlm_type: VLM 类型, qwen3 / qwen3_8b / gemma4 / llama3.2 / internvl3.5 / llavaov
+    :param vlm_type: VLM 类型, qwen3 / qwen3_8b / gemma4 / llama3.2 / internvl3.5 / llavaov / glm4.1v / glm4.1vbase / ovis2.5
     :param vlm_path: 自定义 VLM 路径, 为 None 则使用预设路径
     :param enable_phase2: 是否启用 Phase 2 (Physics-based Analysis), 默认开启
     :param alpha_cap: 物理特征权重上限, 默认 5.0
@@ -735,7 +783,7 @@ if __name__ == "__main__":
     parser.add_argument('--vlm_type', type=str, default='qwen3',
                         choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2',
                                  'internvl3.5', 'internvl3.5_2b', 'smolvlm2',
-                                 'llavaov', 'glm4.1v'],
+                                 'llavaov', 'glm4.1v', 'glm4.1vbase', 'ovis2.5'],
                         help='VLM model type')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='Custom VLM model path (overrides preset)')
