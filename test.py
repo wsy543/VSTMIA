@@ -17,11 +17,12 @@ from typing import List, Dict, Tuple
 # transformers 只在 VLM 相关路径使用, 其他方法(ICLR/USENIX/MBA等)不需要
 # 模块级静默导入, 缺失时只在 load_vlm() 报错
 try:
-    from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+    from transformers import Qwen3VLForConditionalGeneration, AutoProcessor, AutoModelForCausalLM
     _HAS_TRANSFORMERS = True
 except ImportError:
     Qwen3VLForConditionalGeneration = None
     AutoProcessor = None
+    AutoModelForCausalLM = None
     _HAS_TRANSFORMERS = False
 
 from sklearn.metrics import roc_curve, roc_auc_score

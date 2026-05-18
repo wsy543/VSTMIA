@@ -974,7 +974,7 @@ class USENIX2024:
 
         # 显示图例
         ax.legend()
-        plt.savefig(f'{save_dir}/USENIX2024.png', dpi=300)
+        # plt.savefig(f'{save_dir}/USENIX2024.png', dpi=300)
         # 显示图形
         plt.cla()
 
@@ -1468,7 +1468,7 @@ class Arxiv2025:
         # auc,log_auc,tprs=self.plot_auc("lira",torch.tensor(test_l_out),torch.tensor(train_l_out),epch)
         result = list(np.concatenate((train_l_out,test_l_out),axis=0))
         gt = [1]*train_l_out.shape[0]+[0]*test_l_out.shape[0]
-        auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,result,True)
+        auc,tpr = ROC_AUC_Result_logshow_with_auc(gt,result,False)
         # return accs,tprs,auc,log_auc,(train_l_out,test_l_out)
         return auc,tpr,(train_l_out,test_l_out)
 

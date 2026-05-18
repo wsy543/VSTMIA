@@ -25,10 +25,15 @@ class DefenceManager:
         self.args = args
         self.device = args.device
         self.defence = getattr(args, 'defence', 'none').lower()
+        self._last_print_epoch = -1  # 记录上次打印的 epoch，避免每个 batch 都打印
 
-        # DP-SGD 参数 (默认宽松保证收敛，如需隐私保护请调低)
-        self.dp_clip_norm = getattr(args, 'dp_clip_norm', 100.0)
-        self.dp_noise_multiplier = getattr(args, 'dp_noise_multiplier', 0.001)
+        # DP-SGD 参数
+        #   注意: noise_std = noise_multiplier × clip_norm
+        #   grad_norm 很大 (~50) 是因为跨所有参数的总范数,
+        #   而噪声是每参数独立加的, 需控制 noise_std << 每参数平均梯度
+        #   默认 noise_std = 0.0005 × 60 = 0.03 (远小于原版 0.1)
+        self.dp_clip_norm = getattr(args, 'dp_clip_norm', 60.0)
+        self.dp_noise_multiplier = getattr(args, 'dp_noise_multiplier', 0.0005)
 
         # MixupMMD 参数
         self.mixup_alpha = getattr(args, 'mixup_alpha', 0.2)
@@ -88,13 +93,13 @@ class DefenceManager:
 
         return loss
 
-    def on_after_backward(self, model):
+    def on_after_backward(self, model, epoch=None):
         """
         反向传播后的梯度处理.
         用于 DP-SGD: 梯度裁剪 + 添加高斯噪声.
         """
         if self.defence == 'dpsgd':
-            self._apply_dpsgd(model)
+            self._apply_dpsgd(model, epoch=epoch)
 
     def get_optimizer_kwargs(self):
         """
@@ -105,7 +110,7 @@ class DefenceManager:
             return {'weight_decay': self.l2_lambda}
         return {}
 
-    def _apply_dpsgd(self, model):
+    def _apply_dpsgd(self, model, epoch=None):
         """
         DP-SGD: 逐层裁剪梯度 + 添加高斯噪声.
         """
@@ -116,6 +121,12 @@ class DefenceManager:
                 param_norm = p.grad.data.norm(2)
                 total_norm += param_norm.item() ** 2
         total_norm = total_norm ** 0.5
+
+        # 每个 epoch 只打印一次，避免刷屏
+        if epoch is not None and epoch != self._last_print_epoch:
+            self._last_print_epoch = epoch
+            print(f"[DP-SGD] Epoch {epoch + 1}: grad_norm={total_norm:.2f}, "
+                  f"clip_norm={self.dp_clip_norm}, noise_std={self.dp_noise_multiplier * self.dp_clip_norm:.4f}")
 
         # === Step 2: 梯度裁剪 ===
         clip_coef = min(1.0, self.dp_clip_norm / (total_norm + 1e-8))

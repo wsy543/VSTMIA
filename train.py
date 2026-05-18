@@ -425,7 +425,7 @@ class FederatedLearning:
                         loss.backward()
                         
                         # --- 防御: 梯度后处理 (DP-SGD) ---
-                        self.defence_manager.on_after_backward(client_model)
+                        self.defence_manager.on_after_backward(client_model, epoch)
                         
                         optimizer.step()
                         _, predicted = torch.max(outputs, 1)  # 获取最大值的索引（预测类别）

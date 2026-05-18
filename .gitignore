@@ -8,9 +8,22 @@ datas/
 # ============================================
 models/
 models_main/
+models_alpha/
+models_defence/
+models_lr_0.01/
+models_num/
 llm/
 vlm/
 vlm_8b/
+gemma4/
+glm4.1v/
+glm4.1vbase/
+internvl3.5/
+internvl3.5_2b/
+llama3.2/
+llavaov/
+ovis2.52b/
+smolvlm2_2.2b/
 
 # ============================================
 # 日志、报告和图表
