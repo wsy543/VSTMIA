@@ -3,8 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-DATASET="STL10"
-MODEL="resnet"
+DATASET="location"
+MODEL="nn"
 ROUNDS=200
 CLIENTS=5
 PARTICIPANT=5

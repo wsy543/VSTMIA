@@ -1,9 +1,10 @@
 # VLM-MIA：基于视觉语言模型的联邦学习成员推理攻击
 
-**版本：v1.1（2026-09-14）**
+**版本：v1.2（2026-09-14）**
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.2 | 2026-09-14 | 一键脚本拆分出两个数据集专用入口：`run_stl10.sh`（STL10 + resnet）与 `run_location.sh`（location + nn），参数与 `run.sh` 一致并原样透传 |
 | v1.1 | 2026-09-14 | 只保留本项目方法：删除全部基线攻击（`baseline_attack.py` 及 `main.py` 中的 `ICLR` / `USENIX` / `SP` / `arxiv` / `MBA` / `enhancedMIA` / `CSF18` 分支）、`train.py` 中仅供基线使用的 arxiv 中间产物（余弦/梯度范数 pkl）与相关方法、`utils.py` 中仅供基线使用的指标函数 |
 | v1.0 | 2026-09-14 | 交付版：移除全部代码注释与防御实验；数据集仅保留 `STL10` / `location`，模型仅保留 `resnet` / `nn`，VLM 仅保留 `qwen3_2b`；攻击流程只输出数值报告（`reports_lira_lite/audit_details.json`），图片仅保留攻击必需的 loss 曲线；新增一键运行脚本 `run.sh` 与依赖清单 `requirements.txt` |
 
@@ -42,13 +43,22 @@ pip install -r requirements.txt
 
 ## 3. 快速开始（一键运行）
 
+两个数据集各有一个专用入口脚本，参数与 `run.sh` 完全一致（会原样透传）：
+
 ```bash
-bash run.sh --install        # 首次运行: 安装依赖
-bash run.sh                  # 一键跑通完整流程 (默认 location + nn + 200 轮 + 攻击)
-bash run.sh --dataset STL10 --model resnet   # 切换到 STL10 + resnet
+bash run_stl10.sh --install      # 首次运行: 安装依赖
+bash run_stl10.sh                # STL10 + resnet 完整流程 (200 轮 + 攻击)
+bash run_location.sh             # location + nn 完整流程 (200 轮 + 攻击)
 ```
 
-`run.sh` 会自动完成以下 5 个步骤：
+`run.sh` 是这两个脚本共用的引擎，也可以直接调用：
+
+```bash
+bash run.sh                                   # 使用默认配置 (location + nn)
+bash run.sh --dataset STL10 --model resnet    # 指定数据集与模型
+```
+
+脚本会自动完成以下 5 个步骤：
 
 1. 检查 Python 与依赖；
 2. 下载数据集（STL10 官方源 / location 数据集）；
@@ -56,14 +66,14 @@ bash run.sh --dataset STL10 --model resnet   # 切换到 STL10 + resnet
 4. 执行完整流程：数据划分 → 联邦训练 → 生成 loss 曲线图片 → VLM 成员推理攻击；
 5. 打印结果目录与关键输出文件。
 
-其他常用用法：
+其他常用用法（三个脚本通用）：
 
 ```bash
-bash run.sh --quick                              # 快速冒烟验证 (10 轮训练)
-bash run.sh --dataset STL10 --model resnet        # STL10 数据集 + ResNet 模型
-bash run.sh --rounds 50 --clients 5              # 自定义训练轮数
-bash run.sh --skip-data --skip-vlm               # 数据与权重都已就绪时
-bash run.sh --vlm-source hf                      # 强制从 HuggingFace 下载 VLM
+bash run_stl10.sh --quick                        # 快速冒烟验证 (10 轮训练)
+bash run_location.sh --rounds 50 --clients 5     # 自定义训练轮数
+bash run_stl10.sh --lr 0.001                     # 自定义学习率
+bash run_location.sh --skip-data --skip-vlm      # 数据与权重都已就绪时
+bash run_stl10.sh --vlm-source hf                # 强制从 HuggingFace 下载 VLM
 bash run.sh --help                               # 查看全部参数
 ```
 
@@ -145,7 +155,9 @@ python test.py --dataset STL10 --model resnet --max_samples 1000
 | 文件 | 说明 |
 |---|---|
 | `main.py` | 主入口：参数解析、数据准备、联邦训练、攻击调度 |
-| `run.sh` | 一键运行脚本（环境检查 + 数据下载 + 权重下载 + 全流程） |
+| `run.sh` | 一键运行脚本（环境检查 + 数据下载 + 权重下载 + 全流程），两个入口脚本共用 |
+| `run_stl10.sh` | STL10 + resnet 专用入口，等价于 `run.sh --dataset STL10 --model resnet` |
+| `run_location.sh` | location + nn 专用入口，等价于 `run.sh --dataset location --model nn` |
 | `data_processing.py` | 数据集下载与预处理，生成 `datas/{dataset}/full.npz` |
 | `Data.py` | 数据集封装、客户端划分（uniform / dirichlet） |
 | `train.py` | 联邦学习训练主循环（聚合、保存中间轮次模型） |
