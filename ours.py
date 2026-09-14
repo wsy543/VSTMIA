@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from CSModels import ClientModel,PublicLayer,PrivateLayer
 from Data import ClientDataset,ClientDatasetWithMember,TensorDataset
 import os
-from utils import ROC_AUC_Result_logshow,path_exists,custom_collate
+from utils import path_exists
 from torch.optim.lr_scheduler import StepLR
 from sklearn.cluster import KMeans,Birch,AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler

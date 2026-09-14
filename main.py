@@ -35,7 +35,6 @@ from train import FederatedLearning
 from data_processing import process_data
 import logging
 from utils import path_exists
-from baseline_attack import ICLR2023,USENIX2024,SP19,Arxiv2025,MBA,EnhancedMIA,CSF18
 import ours
 import test
 
@@ -71,7 +70,6 @@ def init_args():
     parser.add_argument('--attacker_client_idx',type=int,default=0)
     parser.add_argument('--collusion_client_idx',type=int,nargs="+",default=[1,2])
     parser.add_argument('--save_client_model_idx',type=int,nargs="+",default=[0,1],help='server save these clients` model')
-    parser.add_argument('--arxiv_client',type=int,nargs="+",default=[0,1],help="arxiv2025 need two client for attack")
     parser.add_argument('--data_path', type=str, default='./datas')
     parser.add_argument('--model_path', type=str, default='./models_main',help='./models or ./uniform_models')
     parser.add_argument('-alpha', type=float, default=0.2, help='迪利克雷分布的参数,越大越均匀,TDSC24的论文中说alpha为100时基本均匀')
@@ -83,7 +81,7 @@ def init_args():
     parser.add_argument('--steplr',type=bool,default=False)
     parser.add_argument('--lr_gamma',type=float,default=0.99)
     parser.add_argument('--lr_step',type=int,default=1)
-    parser.add_argument('--method',type=str,default='ours',help='arxiv,USENIX,fluctuate,arxiv,MBA,enhancedMIA, CSF18 ICLR')
+    parser.add_argument('--method',type=str,default='ours',choices=['ours'],help='成员推理攻击方法, 仅支持 ours')
 
     parser.add_argument('--vlm_type', type=str, default='qwen3_2b',
                         choices=['qwen3_2b'],
@@ -114,7 +112,6 @@ def init_args():
     parser.add_argument('--plot_dpi', type=int, default=150,
                         help='图片分辨率 DPI, 默认 150')
 
-    parser.add_argument('--arxiv_save',type=bool,default=True)
     return parser.parse_args()
 
 
@@ -127,16 +124,7 @@ if __name__ == '__main__':
     if args.train_model is True:
         FL = FederatedLearning(args)
         FL.train_FL_models()
-    if args.method== 'ICLR':
-        iclr=ICLR2023(args,0,500)
-        iclr.attack()
-    elif args.method == 'USENIX':
-        usenix = USENIX2024(args=args,data_size=500)
-        usenix.attack('server')
-    elif args.method == 'SP':
-        sp = SP19(args=args,data_size=350)
-        sp.attack(train=True)
-    elif args.method == 'ours':
+    if args.method == 'ours':
         if args.regenerate_plots:
             ours = ours.ours(args=args,size=1000)
             ours.make_loader_for_vlm()
@@ -149,19 +137,4 @@ if __name__ == '__main__':
                         calib_threshold=args.calib_threshold,
                         head_ratio=args.head_ratio,
                         tail_ratio=args.tail_ratio)
-    elif args.method == 'arxiv':
-        ours = Arxiv2025(args=args)
-        ours.attack()
-    elif args.method == 'MBA':
-        ours = MBA(args=args)
-        ours.attack('mentropy')
-    elif args.method == 'enhancedMIA':
-        ours=EnhancedMIA(args)
-        ours.attack_d()
-    elif args.method == 'CSF18':
-        ours=CSF18(args)
-        ours.attack()
-
-    else:
-        None
     print(f'model:{args.model},dataset:{args.dataset}')

@@ -1,4 +1,3 @@
-import copy
 import random
 import os
 import CSModels
@@ -9,10 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 import sys
 import torch
-import copy
 from utils import path_exists
-import torch.nn.functional as F
-from torch.func import grad, vmap
 
 import logging
 logger = logging.getLogger(__name__)
@@ -207,7 +203,6 @@ class FederatedLearning:
         path = args.model_path + '/' + args.model+'/'+ args.dataset + '/'
         server_path = path + 'server_model'
         client_path = path + 'client_model'
-        arxiv_path = path+'our_model/arxiv/'
         path_exists(server_path)
         path_exists(client_path)
 
@@ -238,7 +233,6 @@ class FederatedLearning:
                 
             for i,c_idx in enumerate(idx_cur_round):
                 train_loader = self.build_dataloader(self.train_data,self.train_label,c_idx)
-                test_loader = self.build_dataloader(self.test_data, self.test_label,c_idx,shuffle=False)
                 client_model = self.client_models[i]
                 for param in client_model.parameters():
                     param.requires_grad = True
@@ -261,7 +255,6 @@ class FederatedLearning:
                     sys.exit(1)
 
                 loss_fn = nn.CrossEntropyLoss()
-                loss_noreduce = nn.CrossEntropyLoss(reduction='none')
                 client_model.train()
                 for epoch in range(args.epochs):
                     running_loss, correct, total = 0, 0, 0
@@ -288,73 +281,6 @@ class FederatedLearning:
                 del optimizer
                 
 
-                if args.arxiv_save is True:
-                    with torch.no_grad():
-                        total, correct, loss_meter= 0, 0,0
-                        for _, (x, y) in enumerate(test_loader):
-                            x = x.to(device)
-                            y = y.to(device)
-                            outputs = client_model(x)
-                            loss_meter += F.cross_entropy(outputs, y, reduction='sum').item()
-                            _, predicted = torch.max(outputs, 1)
-                            total += y.size(0)
-                            correct += (predicted == y).sum().item()
-                    acc = correct/total
-                    loss_meter /= total
-                    save_dict={}
-                    save_dict['test_acc']=acc
-                    save_dict["test_loss"]=loss_meter
-                    test_loader_for_arxiv_train = self.build_dataloader(self.test_data,self.test_label,self.args.arxiv_client[0],shuffle=False)
-                    test_res = self.get_all_losses(test_loader_for_arxiv_train,client_model,loss_noreduce,self.args.device)
-                    save_dict['test_index']=c_idx
-                    save_dict['test_res']=test_res
-
-                    train_loader_for_arxiv_train = self.build_dataloader(self.train_data,self.train_label,self.args.arxiv_client[0],shuffle=False)
-                    train_res = self.get_all_losses(train_loader_for_arxiv_train,client_model,loss_noreduce,self.args.device)
-                    save_dict['train_index']=self.args.arxiv_client[0]
-                    save_dict['train_res']=train_res
-
-                    train_loader_for_arxiv_val = self.build_dataloader(self.train_data,self.train_label,self.args.arxiv_client[1],shuffle=False)
-                    val_res = self.get_all_losses(train_loader_for_arxiv_val,client_model,loss_noreduce,self.args.device)
-                    save_dict['val_index']=self.args.arxiv_client[1]
-                    save_dict["val_res"]=val_res
-
-                    model_grads= []
-                    for name, local_param in client_model.named_parameters():
-                        if local_param.requires_grad == True:
-                            para_diff =  self.global_model.state_dict()[name] - client_model.state_dict()[name]
-                            model_grads.append(para_diff.detach().cpu().flatten())
-                    model_grads=torch.cat(model_grads,-1)
-                    cos_model = self.build_global_model()
-                    cos_model= cos_model.to(self.args.device)
-                    cos_model.load_state_dict(self.global_model.state_dict())
-                    train_cos,train_diffs, train_norm,val_cos, val_diffs,val_norm,test_cos, test_diffs,test_norm, mix_cos, mix_diffs,mix_norm=self.get_all_cos_functorch(
-                                                                    cos_model, 
-                                                                    test_loader,
-                                                                    train_loader, 
-                                                                    None,
-                                                                    None,
-                                                                    model_grads, 
-                                                                    lr,
-                                                                    self.args.optimizer)
-                    save_dict['train_cos']=train_cos
-                    save_dict['val_cos']=val_cos
-                    save_dict['test_cos']=test_cos
-                    save_dict['mix_cos']=mix_cos
-                    save_dict['train_diffs']=train_diffs
-                    save_dict['val_diffs']=val_diffs
-                    save_dict['test_diffs']=test_diffs
-                    save_dict['mix_diffs']=mix_diffs
-                    save_dict['train_grad_norm']=train_norm
-                    save_dict['val_grad_norm']=val_norm
-                    save_dict['test_grad_norm']=test_norm
-                    save_dict['mix_grad_norm']=mix_norm
-                    if not os.path.exists(arxiv_path):
-                        os.makedirs(arxiv_path)
-                        print('MIA Score Saved in:', os.path.join(arxiv_path))
-                    torch.save(save_dict, os.path.join(arxiv_path+f'client_{c_idx}_round_{round}.pkl'))
-
-
             self.global_model.train()
             param_list = []
             for i in range(len(self.client_models)):
@@ -379,119 +305,3 @@ class FederatedLearning:
             torch.save(self.global_model.state_dict(), server_path + f'/server_{round}.pth')
 
         logging.info('finish training FL model')
-
-
-    def get_all_losses(self, dataloader, model, criterion, device,req_logits=False):
-        model.eval()
-        losses = []
-        logits = []
-        labels = []
-
-        with torch.no_grad():
-            for batch_idx, (inputs, targets) in enumerate(dataloader):
-                inputs, targets = inputs.to(device), targets.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                losses.append(loss.cpu().numpy())
-                logits.append(outputs.cpu())
-                labels.append(targets.cpu())
-
-        losses = np.concatenate(losses)
-        logits = torch.cat(logits)
-        labels = torch.cat(labels)
-        return {"loss":losses,"logit":logits,"labels":labels}
-    
-
-    def get_all_cos_functorch(self, cos_model, test_loader, train_loader, mix_loader, DP_INIT_LOADER,model_grads, lr, optim_choice):
-        device = self.args.device
-        cos_model = cos_model.to(device)
-        
-        for module in cos_model.modules():
-            if isinstance(module, nn.BatchNorm2d):
-                module.eval()
-        
-        if optim_choice == "SGD":
-            optimizer = optim.SGD(cos_model.parameters(), lr=lr, momentum=0.9)
-        else:
-            optimizer = optim.Adam(cos_model.parameters(), lr=lr, betas=(0.9, 0.999))
-        
-        train_cos, train_diffs, train_norm = self.get_cos_score_functorch(train_loader, cos_model, device, model_grads)
-        test_cos, test_diffs, test_norm = self.get_cos_score_functorch(test_loader, cos_model, device, model_grads)
-        
-        return train_cos, train_diffs, train_norm, None, None, None, test_cos, test_diffs, test_norm, None,None,None
-    
-    def get_cos_score_functorch_origin(self, dataloader, model, device, model_grads):
-        
-        model.train()
-        
-        for module in model.modules():
-            if isinstance(module, (nn.BatchNorm2d, nn.BatchNorm1d)):
-                module.eval()
-        
-        model.half() 
-        
-        def compute_loss(params, buffers, x, y):
-            output = torch.func.functional_call(model, (params, buffers), x.unsqueeze(0))
-            return F.cross_entropy(output, y.unsqueeze(0))
-        
-        params = {k: v.detach().half() for k, v in model.named_parameters()}
-        buffers = {k: v.detach().half() for k, v in model.named_buffers()}
-        
-        ft_compute_grad = grad(compute_loss)
-        batch_ft_compute_grad = vmap(ft_compute_grad, in_dims=(None, None, 0, 0))
-        
-        all_cos, all_diffs, all_norms = [], [], []
-        
-        model_grads = model_grads.to(device).half().view(1, -1)
-        
-        for x, y in dataloader:
-            x, y = x.to(device).half(), y.to(device)
-            
-            batch_grads = batch_ft_compute_grad(params, buffers, x, y)
-            
-            flat_grads = torch.cat([g.view(g.shape[0], -1) for g in batch_grads.values()], dim=1)
-            
-            cos_sim = F.cosine_similarity(flat_grads, model_grads, dim=1)
-            diff = torch.norm(flat_grads - model_grads, p=2, dim=1)
-            norm = torch.norm(flat_grads, p=2, dim=1)
-            
-            all_cos.extend(cos_sim.float().cpu().tolist())
-            all_diffs.extend(diff.float().cpu().tolist())
-            all_norms.extend(norm.float().cpu().tolist())
-        
-        model.eval().float()
-        
-        return torch.tensor(all_cos), torch.tensor(all_diffs), torch.tensor(all_norms)
-
-    def get_cos_score_functorch(self, dataloader, model, device, model_grads):
-        model.eval()
-        
-        def compute_loss(params, x, y):
-            output = torch.func.functional_call(model, params, x.unsqueeze(0))
-            return F.cross_entropy(output, y.unsqueeze(0))
-        
-        params = {k: v.detach() for k, v in model.named_parameters()}
-        buffers = {k: v.detach() for k, v in model.named_buffers()}
-        
-        ft_compute_grad = grad(compute_loss)
-        batch_ft_compute_grad = vmap(ft_compute_grad, in_dims=(None, 0, 0))
-        
-        all_cos, all_diffs, all_norms = [], [], []
-        model_grads = model_grads.to(device)
-        
-        for x, y in dataloader:
-            x, y = x.to(device), y.to(device)
-            
-            batch_grads = batch_ft_compute_grad(params, x, y)
-            
-            flat_grads = torch.cat([g.view(g.shape[0], -1) for g in batch_grads.values()], dim=1)
-            
-            cos_sim = F.cosine_similarity(flat_grads, model_grads.view(1, -1), dim=1)
-            diff = torch.norm(flat_grads - model_grads, p=2, dim=1)
-            norm = torch.norm(flat_grads, p=2, dim=1)
-            
-            all_cos.extend(cos_sim.cpu().tolist())
-            all_diffs.extend(diff.cpu().tolist())
-            all_norms.extend(norm.cpu().tolist())
-        
-        return torch.tensor(all_cos), torch.tensor(all_diffs), torch.tensor(all_norms)

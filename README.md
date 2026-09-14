@@ -1,9 +1,10 @@
 # VLM-MIA：基于视觉语言模型的联邦学习成员推理攻击
 
-**版本：v1.0（2026-09-14）**
+**版本：v1.1（2026-09-14）**
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.1 | 2026-09-14 | 只保留本项目方法：删除全部基线攻击（`baseline_attack.py` 及 `main.py` 中的 `ICLR` / `USENIX` / `SP` / `arxiv` / `MBA` / `enhancedMIA` / `CSF18` 分支）、`train.py` 中仅供基线使用的 arxiv 中间产物（余弦/梯度范数 pkl）与相关方法、`utils.py` 中仅供基线使用的指标函数 |
 | v1.0 | 2026-09-14 | 交付版：移除全部代码注释与防御实验；数据集仅保留 `STL10` / `location`，模型仅保留 `resnet` / `nn`，VLM 仅保留 `qwen3_2b`；攻击流程只输出数值报告（`reports_lira_lite/audit_details.json`），图片仅保留攻击必需的 loss 曲线；新增一键运行脚本 `run.sh` 与依赖清单 `requirements.txt` |
 
 本项目实现了一套针对联邦学习（Federated Learning, FL）模型的成员推理攻击（Membership Inference Attack, MIA）流程：
@@ -25,7 +26,7 @@
 | 数据集 | `STL10`（图像，10 类）、`location`（Bangkok 表格数据，30 类） |
 | 模型 | `resnet`（ResNet-9-9-9）、`nn`（3 层 MLP） |
 | VLM | `qwen3_2b`（Qwen3-VL-2B-Instruct） |
-| 攻击方法 | `ours`（本项目方法），另保留 7 个基线方法 `ICLR` / `USENIX` / `SP` / `arxiv` / `MBA` / `enhancedMIA` / `CSF18` |
+| 攻击方法 | `ours`（本项目方法） |
 
 ## 2. 环境要求
 
@@ -150,11 +151,10 @@ python test.py --dataset STL10 --model resnet --max_samples 1000
 | `train.py` | 联邦学习训练主循环（聚合、保存中间轮次模型） |
 | `ours.py` | 生成 VLM 输入：逐轮 loss 曲线图片与 loss 序列 |
 | `fix.py` | 汇总 member / nonmember 的 loss 序列为 `metrics_history_selected.pkl` |
-| `test.py` | 攻击主流程：VLM 打分 → 物理特征校准 → 自适应融合 → 评估与绘图 |
+| `test.py` | 攻击主流程：VLM 打分 → 物理特征校准 → 自适应融合 → 评估（AUC / TPR@FPR） |
 | `CSModels.py` | 模型工厂（resnet / nn）与数据相关参数（分辨率、类别数） |
 | `normalModel.py` | 网络结构实现（ResNet-9-9-9、MLP） |
-| `baseline_attack.py` | 7 个成员推理基线攻击实现 |
-| `utils.py` | 通用工具：npz 读取、ROC/AUC 指标与绘图 |
+| `utils.py` | 通用工具：npz 读取、目录创建 |
 
 ## 6. 输出说明
 
