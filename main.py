@@ -100,10 +100,10 @@ def init_args():
     parser.add_argument('--method',type=str,default='ours',help='arxiv,USENIX,fluctuate,arxiv,MBA,enhancedMIA, CSF18 ICLR')
 
     parser.add_argument('--vlm_type', type=str, default='qwen3',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2',
+                        choices=['qwen3', 'qwen3_2b', 'qwen3_8b', 'gemma4', 'llama3.2',
                                  'internvl3.5', 'internvl3.5_2b', 'smolvlm2',
                                  'llavaov', 'glm4.1v', 'glm4.1vbase', 'ovis2.5'],
-                        help='VLM 模型选择: qwen3(2B) / qwen3_8b(8B) / gemma4 / '
+                        help='VLM 模型选择: qwen3(4B) / qwen3_2b(2B) / qwen3_8b(8B) / gemma4 / '
                              'llama3.2 / internvl3.5(8B) / internvl3.5_2b(2B) / '
                              'smolvlm2(2.2B) / llavaov(7B) / glm4.1v(9B-思考模型) / '
                              'glm4.1vbase(9B-基础模型) / ovis2.5(2B)')

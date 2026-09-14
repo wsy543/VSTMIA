@@ -31,6 +31,7 @@ from sklearn.metrics import roc_curve, roc_auc_score
 # 默认模型路径
 VLM_PATHS = {
     "qwen3":          "./vlm",
+    "qwen3_2b":       "./vlm_2b",
     "qwen3_8b":       "./vlm_8b",
     "gemma4":         "./gemma4",
     "llama3.2":       "./llama3.2",
@@ -57,7 +58,7 @@ def load_vlm(model_path: str, vlm_type: str):
     print(f"[VLM Loader] Loading {vlm_type} from {model_path}...")
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
 
-    if vlm_type in ("qwen3", "qwen3_8b"):
+    if vlm_type in ("qwen3", "qwen3_2b", "qwen3_8b"):
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
@@ -116,7 +117,7 @@ def load_vlm(model_path: str, vlm_type: str):
         # Ovis2.5 使用模型的 text_tokenizer 作为 processor
         processor = model.text_tokenizer
     else:
-        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_8b, gemma4, llama3.2, internvl3.5, internvl3.5_2b, smolvlm2, llavaov, glm4.1v, glm4.1vbase, ovis2.5")
+        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_2b, qwen3_8b, gemma4, llama3.2, internvl3.5, internvl3.5_2b, smolvlm2, llavaov, glm4.1v, glm4.1vbase, ovis2.5")
 
     return model, processor
 
@@ -234,7 +235,7 @@ class Phase1Screener:
             {"type": "text", "text": self.prompt}
         ]}]
         # Qwen3VL / Llama 3.2 / InternVL3.5 都有 apply_chat_template
-        if self.vlm_type in ("qwen3", "qwen3_8b", "llama3.2",
+        if self.vlm_type in ("qwen3", "qwen3_2b", "qwen3_8b", "llama3.2",
                              "internvl3.5", "internvl3.5_2b",
                              "llavaov", "glm4.1v", "glm4.1vbase"):
             inputs = self.processor.apply_chat_template(
@@ -750,7 +751,7 @@ def run_attack(dataset: str, model: str, max_samples: int = 1000,
     :param dataset: 数据集名称, 如 'CIFAR10', 'CIFAR100', 'STL10' 等
     :param model: 模型名称, 如 'mobilenet', 'densenet', 'resnet' 等
     :param max_samples: 最多测试的样本数
-    :param vlm_type: VLM 类型, qwen3 / qwen3_8b / gemma4 / llama3.2 / internvl3.5 / llavaov / glm4.1v / glm4.1vbase / ovis2.5
+    :param vlm_type: VLM 类型, qwen3 / qwen3_2b / qwen3_8b / gemma4 / llama3.2 / internvl3.5 / llavaov / glm4.1v / glm4.1vbase / ovis2.5
     :param vlm_path: 自定义 VLM 路径, 为 None 则使用预设路径
     :param enable_phase2: 是否启用 Phase 2 (Physics-based Analysis), 默认开启
     :param alpha_cap: 物理特征权重上限, 默认 5.0
@@ -782,7 +783,7 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
     parser.add_argument('--max_samples', type=int, default=1000, help='Max test samples')
     parser.add_argument('--vlm_type', type=str, default='qwen3',
-                        choices=['qwen3', 'qwen3_8b', 'gemma4', 'llama3.2',
+                        choices=['qwen3', 'qwen3_2b', 'qwen3_8b', 'gemma4', 'llama3.2',
                                  'internvl3.5', 'internvl3.5_2b', 'smolvlm2',
                                  'llavaov', 'glm4.1v', 'glm4.1vbase', 'ovis2.5'],
                         help='VLM model type')
