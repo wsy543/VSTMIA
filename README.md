@@ -1,5 +1,11 @@
 # VLM-MIA：基于视觉语言模型的联邦学习成员推理攻击
 
+**版本：v1.0（2026-09-14）**
+
+| 版本 | 日期 | 内容 |
+|---|---|---|
+| v1.0 | 2026-09-14 | 交付版：移除全部代码注释与防御实验；数据集仅保留 `STL10` / `location`，模型仅保留 `resnet` / `nn`，VLM 仅保留 `qwen3_2b`；攻击流程只输出数值报告（`reports_lira_lite/audit_details.json`），图片仅保留攻击必需的 loss 曲线；新增一键运行脚本 `run.sh` 与依赖清单 `requirements.txt` |
+
 本项目实现了一套针对联邦学习（Federated Learning, FL）模型的成员推理攻击（Membership Inference Attack, MIA）流程：
 
 1. 在 FL 训练过程中保存每一轮的服务器模型权重；
@@ -37,7 +43,8 @@ pip install -r requirements.txt
 
 ```bash
 bash run.sh --install        # 首次运行: 安装依赖
-bash run.sh                  # 一键跑通完整流程 (STL10 + resnet + 200 轮 + 攻击)
+bash run.sh                  # 一键跑通完整流程 (默认 location + nn + 200 轮 + 攻击)
+bash run.sh --dataset STL10 --model resnet   # 切换到 STL10 + resnet
 ```
 
 `run.sh` 会自动完成以下 5 个步骤：
@@ -52,7 +59,7 @@ bash run.sh                  # 一键跑通完整流程 (STL10 + resnet + 200 �
 
 ```bash
 bash run.sh --quick                              # 快速冒烟验证 (10 轮训练)
-bash run.sh --dataset location --model nn        # location 数据集 + MLP 模型
+bash run.sh --dataset STL10 --model resnet        # STL10 数据集 + ResNet 模型
 bash run.sh --rounds 50 --clients 5              # 自定义训练轮数
 bash run.sh --skip-data --skip-vlm               # 数据与权重都已就绪时
 bash run.sh --vlm-source hf                      # 强制从 HuggingFace 下载 VLM
@@ -63,13 +70,13 @@ bash run.sh --help                               # 查看全部参数
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `--dataset NAME` | `STL10` | 数据集：`STL10` / `location` |
-| `--model NAME` | `resnet` | 模型：`resnet` / `nn` |
+| `--dataset NAME` | `location` | 数据集：`STL10` / `location` |
+| `--model NAME` | `nn` | 模型：`resnet` / `nn` |
 | `--rounds N` | `200` | 联邦训练总轮数 |
 | `--clients N` | `5` | 客户端总数 |
 | `--participant N` | `5` | 每轮参与训练的客户端数 |
 | `--epochs N` | `2` | 客户端本地训练 epoch 数 |
-| `--lr F` | `0.005` | 学习率 |
+| `--lr F` | `0.01` | 学习率 |
 | `--batch-size N` | `64` | 批大小 |
 | `--quick` | 关闭 | 快速模式，等价于 `--rounds 10` |
 | `--skip-data` | 关闭 | 跳过数据集下载 |
@@ -161,11 +168,6 @@ python test.py --dataset STL10 --model resnet --max_samples 1000
 | `plot/vlm_data/{model}/{dataset}/member|nonmember/` | VLM 输入图片（loss 曲线） |
 | `plot/vlm_data/{model}/{dataset}/metrics_history_selected.pkl` | 每个样本的逐轮 loss 序列 |
 | `reports_lira_lite/audit_details.json` | 每个样本的最终分数、VLM 分数与物理特征 |
-| `reports_lira_lite/roc_final_loglog.png` | 对数坐标 ROC 曲线 |
-| `reports_lira_lite/final_score_distribution.png` | 最终融合分数分布 |
-| `reports_lira_lite/vlm_score_distribution_p1.png` | Phase 1 纯 VLM 分数分布 |
-| `reports_lira_lite/2d_decision_space_plot.png` | VLM 分数与物理分数构成的二维决策空间 |
-| `reports_lira_lite/hypothesis_validation_plots.png` | 物理特征假设验证图 |
 
 ## 7. 常见问题
 

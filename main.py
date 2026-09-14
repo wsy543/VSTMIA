@@ -79,7 +79,7 @@ def init_args():
     parser.add_argument('--split_ratio', type=float, default=0.5)
     parser.add_argument('--random_seed', type=int, default=123)
     parser.add_argument('--log_name', type=str, default='train_models')
-    parser.add_argument('--lr',type=float,default=0.005)
+    parser.add_argument('--lr',type=float,default=0.01)
     parser.add_argument('--steplr',type=bool,default=False)
     parser.add_argument('--lr_gamma',type=float,default=0.99)
     parser.add_argument('--lr_step',type=int,default=1)

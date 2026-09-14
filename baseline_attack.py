@@ -12,7 +12,6 @@ import utils
 from utils import load_npz_data
 from CSModels import PublicLayer,PrivateLayer
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 from copy import copy
 import scipy
 from sklearn import metrics
@@ -719,7 +718,6 @@ class USENIX2024:
         tpr = ROC_AUC_Result_logshow(ground_truth,slopes,False)
         tpr = ROC_AUC_Result_logshow(ground_truth,slopes,True)
 
-        self.plot_histograms(slopes,ground_truth)
         return tpr
     
     def server_attack(self):
@@ -745,7 +743,6 @@ class USENIX2024:
         slopes = [-i for i in slopes]
         tpr = ROC_AUC_Result_logshow(ground_truth,slopes,False)
 
-        self.plot_histograms(slopes,ground_truth)
         return tpr
     
     
@@ -758,23 +755,6 @@ class USENIX2024:
             print('wrong type')
         
     
-    def plot_histograms(self, x, y):
-        save_dir = './plots'
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        ax.hist([xi for xi, yi in zip(x, y) if yi == 0], bins=30, alpha=0.5, label='nonmember', color='blue', edgecolor='black')
-
-        ax.hist([xi for xi, yi in zip(x, y) if yi == 1], bins=30, alpha=0.5, label='member', color='red', edgecolor='black')
-
-        ax.set_title('Distribution of Data by Labels')
-        ax.set_xlabel('Data Value')
-        ax.set_ylabel('Frequency')
-
-        ax.legend()
-        plt.cla()
-
-        
-
 class ICLR2023:
 
     def __init__(self, args, attack_client_idx, total_eval_size=600):
@@ -1393,57 +1373,6 @@ class Arxiv2025:
 
 
     def fig_out(self,x_axis_data, log_path, d,avg_d=None,single_score=None, other_scores=None,accs=None): 
-        colors={
-            "cosine attack":"r",
-            "grad diff":"g",
-            "loss based":"b",
-            "grad norm":(242/256, 159/256, 5/256),
-            "lira":"y",
-            "log_lira":"k",
-            "lira_loss":'purple'
-                }
-        labels_per_epoch = {
-            "cosine attack":"Grad-Cosine",
-            "grad diff":"Grad-Diff",
-            "loss based":"Blackbox-Loss",
-            "grad norm":"Grad-Norm"
-        }
-        labels_temporal = {
-            "cosine attack":"Avg-Cosine",
-            "loss based":"Loss-Series",
-            "lira":"FedMIA-II",
-            "lira_loss":"FedMIA-I"
-        }
-        fig = plt.figure(figsize=(6.5, 6.5), dpi=200)
-        fig.subplots_adjust(top=0.91,
-                            bottom=0.160,
-                            left=0.180,
-                            right=0.9,
-                            hspace=0.2,
-                            wspace=0.2)
-        for k in labels_per_epoch.keys():
-            print(k, d[k])
-            plt.plot(x_axis_data[0:len(d[k])], d[k], linewidth=1, label=labels_per_epoch[k], color=colors[k])
-        plt.legend(loc=3)  
-
-        plt.xlim(-2, 305)
-        my_x_ticks = np.arange(0, 302, 50)
-        plt.xticks(my_x_ticks,size=14)
-        if avg_d:
-            for k in labels_temporal.keys():
-                if avg_d[k]:    
-                    plt.hlines([avg_d[k]["0.001"]],xmin=0,xmax=300,label=labels_temporal[k],color=colors[k])
-
-        plt.legend(prop={'size': 10})
-        plt.xlabel('Epoch',fontsize=14,fontdict={'size': 14})
-        plt.ylabel('TPR@FPR=0.001',fontsize=14,fontdict={'size': 14})
-        plt.grid(axis='both')
-
-        pdf_path=self.PATH.split("/")[0:-1]
-        pdf_path="/".join(pdf_path)+f"/attack_fig_{self.select_mode}_{self.select_method}_n{self.SHADOW_NUM}_s{self.SEED}.pdf"
-        
-        print('fig saved in', pdf_path)
-        plt.savefig(pdf_path)
 
         log_path=log_path+f"/attack_score_{self.select_mode}_{self.select_method}_n{self.SHADOW_NUM}_s{self.SEED}.log"
         with open(log_path,"w") as f:

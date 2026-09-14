@@ -9,7 +9,7 @@ ROUNDS=200
 CLIENTS=5
 PARTICIPANT=5
 EPOCHS=2
-LR=""
+LR=0.01
 BATCH_SIZE=64
 SEED=123
 QUICK=0
@@ -25,33 +25,33 @@ VLM_REPO="Qwen/Qwen3-VL-2B-Instruct"
 
 usage() {
     cat <<'EOF'
-一键运行脚本
+One-click runner for the VLM-based membership inference pipeline
 
-用法:
-  bash run.sh [选项]
+Usage:
+  bash run.sh [options]
 
-选项:
-  --dataset NAME    数据集: STL10 (默认) 或 location
-  --model NAME      模型: resnet (默认) 或 nn
-  --rounds N        联邦训练轮数, 默认 200
-  --clients N       客户端数量, 默认 5
-  --participant N   每轮参与训练的客户端数量, 默认 5
-  --epochs N        客户端本地训练轮数, 默认 2
-  --lr F            学习率, 默认 0.005
-  --batch-size N    批大小, 默认 64
-  --quick           快速冒烟模式(10 轮训练)
-  --skip-data       跳过数据集下载
-  --skip-vlm        跳过 VLM 权重下载
-  --vlm-source S    VLM 下载源: auto (默认) / modelscope / hf
-  --vlm-dir DIR     VLM 权重保存目录, 默认 ./vlm_2b
-  --install         先安装 requirements.txt 中的依赖
-  -h, --help        显示帮助
+Options:
+  --dataset NAME    dataset: STL10 (default) or location
+  --model NAME      model: resnet (default) or nn
+  --rounds N        federated training rounds, default 200
+  --clients N       number of clients, default 5
+  --participant N   clients participating in each round, default 5
+  --epochs N        local epochs per client, default 2
+  --lr F            learning rate, default 0.01
+  --batch-size N    batch size, default 64
+  --quick           quick smoke test (10 training rounds)
+  --skip-data       skip dataset download
+  --skip-vlm        skip VLM checkpoint download
+  --vlm-source S    VLM download source: auto (default) / modelscope / hf
+  --vlm-dir DIR     directory of the VLM checkpoint, default ./vlm_2b
+  --install         install dependencies from requirements.txt first
+  -h, --help        show this help message
 
-示例:
-  bash run.sh                                  # STL10 + resnet 完整流程
-  bash run.sh --dataset location --model nn    # location + nn 完整流程
-  bash run.sh --quick                          # 10 轮快速验证
-  bash run.sh --install --quick                # 安装依赖并快速验证
+Examples:
+  bash run.sh                                  # full pipeline: STL10 + resnet
+  bash run.sh --dataset location --model nn    # full pipeline: location + nn
+  bash run.sh --quick                          # quick run with 10 rounds
+  bash run.sh --install --quick                # install dependencies then quick run
 EOF
 }
 
@@ -72,7 +72,7 @@ while [[ $# -gt 0 ]]; do
         --vlm-dir) VLM_DIR="$2"; shift 2 ;;
         --install) DO_INSTALL=1; shift ;;
         -h|--help) usage; exit 0 ;;
-        *) echo "未知参数: $1"; usage; exit 1 ;;
+        *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
 
@@ -81,7 +81,7 @@ if [[ "$QUICK" == "1" ]]; then
 fi
 
 if [[ -z "$LR" ]]; then
-    LR="0.005"
+    LR="0.01"
 fi
 
 PYTHON="${PYTHON:-python}"
@@ -93,25 +93,25 @@ banner() {
     echo "=================================================================="
 }
 
-banner "步骤 1/5  检查 Python 环境"
+banner "Step 1/5  Checking Python environment"
 "$PYTHON" - <<'PY'
 import sys
 if sys.version_info < (3, 9):
-    raise SystemExit(f"需要 Python >= 3.9, 当前版本 {sys.version.split()[0]}")
+    raise SystemExit(f"Python >= 3.9 is required, current version: {sys.version.split()[0]}")
 print(f"Python {sys.version.split()[0]}  OK")
 try:
     import torch
     print(f"torch {torch.__version__}  CUDA available: {torch.cuda.is_available()}")
 except ImportError:
-    print("[提示] 未检测到 torch, 请先执行: bash run.sh --install")
+    print("[hint] torch not found, run: bash run.sh --install")
 PY
 
 if [[ "$DO_INSTALL" == "1" ]]; then
-    banner "安装依赖 (requirements.txt)"
+    banner "Installing dependencies (requirements.txt)"
     "$PYTHON" -m pip install -r requirements.txt
 fi
 
-banner "步骤 2/5  检查依赖"
+banner "Step 2/5  Checking dependencies"
 "$PYTHON" - <<'PY'
 import importlib
 missing = []
@@ -122,29 +122,29 @@ for name in ["torch", "torchvision", "transformers", "numpy", "scipy", "sklearn"
     except ImportError:
         missing.append(name)
 if missing:
-    raise SystemExit("缺少依赖: " + ", ".join(missing) + "\n请执行: bash run.sh --install")
-print("依赖检查通过")
+    raise SystemExit("Missing dependencies: " + ", ".join(missing) + "\nRun: bash run.sh --install")
+print("All dependencies are available")
 PY
 
-banner "步骤 3/5  准备数据集 (${DATASET})"
+banner "Step 3/5  Preparing dataset (${DATASET})"
 if [[ "$SKIP_DATA" == "1" ]]; then
-    echo "已跳过数据集下载"
+    echo "Dataset download skipped"
 elif [[ "$DATASET" == "STL10" ]]; then
     if [[ -d "$STL10_DIR/stl10_binary" ]]; then
-        echo "STL10 已存在: $STL10_DIR"
+        echo "STL10 already available: $STL10_DIR"
     else
-        echo "开始下载 STL10 (约 2.6 GB, 官方源 ai.stanford.edu)..."
+        echo "Downloading STL10 (~2.6 GB from ai.stanford.edu) ..."
         "$PYTHON" - <<PY
 import torchvision
 torchvision.datasets.STL10(root="${STL10_DIR}", split="train", download=True)
-print("STL10 下载完成: ${STL10_DIR}")
+print("STL10 ready: ${STL10_DIR}")
 PY
     fi
 elif [[ "$DATASET" == "location" ]]; then
     if [[ -f "$LOCATION_RAW" ]]; then
-        echo "location 数据已存在: $LOCATION_RAW"
+        echo "location dataset already available: $LOCATION_RAW"
     else
-        echo "开始下载 location (Bangkok) 数据集..."
+        echo "Downloading the location (Bangkok) dataset ..."
         LOCATION_URL="$LOCATION_URL" LOCATION_RAW="$LOCATION_RAW" "$PYTHON" - <<'PY'
 import os
 import ssl
@@ -172,17 +172,17 @@ for name in os.listdir(root):
         os.replace(os.path.join(root, name), target)
         break
 os.remove(tgz)
-print(f"location 数据下载完成: {target}")
+print(f"location dataset ready: {target}")
 PY
     fi
 else
-    echo "未知数据集: $DATASET (可选: STL10 / location)"
+    echo "Unknown dataset: $DATASET (supported: STL10 / location)"
     exit 1
 fi
 
-banner "步骤 4/5  准备 VLM 权重 (${VLM_REPO})"
+banner "Step 4/5  Preparing VLM checkpoint (${VLM_REPO})"
 if [[ "$SKIP_VLM" == "1" ]]; then
-    echo "已跳过 VLM 下载"
+    echo "VLM download skipped"
 else
     VLM_DIR="$VLM_DIR" VLM_SOURCE="$VLM_SOURCE" VLM_REPO="$VLM_REPO" "$PYTHON" - <<'PY'
 import os
@@ -197,7 +197,7 @@ has_weight = os.path.isdir(target) and any(
     f.endswith(".safetensors") or f.endswith(".bin") for f in os.listdir(target)
 )
 if has_config and has_weight:
-    print(f"VLM 权重已存在: {target}")
+    print(f"VLM checkpoint already available: {target}")
     sys.exit(0)
 
 os.makedirs(target, exist_ok=True)
@@ -206,34 +206,34 @@ downloaded = False
 if source in ("auto", "modelscope"):
     try:
         from modelscope import snapshot_download
-        print(f"从 ModelScope 下载 {repo} ...")
+        print(f"Downloading {repo} from ModelScope ...")
         snapshot_download(repo, local_dir=target)
         downloaded = True
-        print("ModelScope 下载完成")
+        print("ModelScope download finished")
     except Exception as exc:
-        print(f"[警告] ModelScope 下载失败: {exc}")
+        print(f"[warning] ModelScope download failed: {exc}")
 
 if not downloaded and source in ("auto", "hf", "huggingface"):
     try:
         from huggingface_hub import snapshot_download
-        print(f"从 HuggingFace 下载 {repo} ...")
+        print(f"Downloading {repo} from HuggingFace ...")
         snapshot_download(repo, local_dir=target)
         downloaded = True
-        print("HuggingFace 下载完成")
+        print("HuggingFace download finished")
     except Exception as exc:
-        print(f"[警告] HuggingFace 下载失败: {exc}")
+        print(f"[warning] HuggingFace download failed: {exc}")
 
 if not downloaded:
-    print("[错误] VLM 权重下载失败, 可手动下载后放入 " + target)
+    print("[error] Failed to download the VLM checkpoint, please download it manually into " + target)
     sys.exit(1)
 PY
 fi
 
-banner "步骤 5/5  运行完整流程 (${DATASET} + ${MODEL})"
-echo "训练轮数: ${ROUNDS}, 客户端数: ${CLIENTS}, 每轮参与: ${PARTICIPANT}, 本地 epoch: ${EPOCHS}"
+banner "Step 5/5  Running the full pipeline (${DATASET} + ${MODEL})"
+echo "rounds: ${ROUNDS}, clients: ${CLIENTS}, participants per round: ${PARTICIPANT}, local epochs: ${EPOCHS}"
 echo "VLM: qwen3_2b @ ${VLM_DIR}"
 echo ""
-echo "流程: 数据划分 -> 联邦训练 -> 生成 loss 曲线图片 -> VLM 成员推理攻击"
+echo "pipeline: data split -> federated training -> loss curve rendering -> VLM membership inference"
 echo ""
 
 "$PYTHON" main.py \
@@ -253,14 +253,9 @@ echo ""
     --vlm_type qwen3_2b \
     --vlm_path "$VLM_DIR"
 
-banner "运行结束"
-echo "攻击报告目录: ./reports_lira_lite"
-echo "  - audit_details.json          每个样本的最终分数与物理特征"
-echo "  - roc_final_loglog.png        对数坐标 ROC 曲线"
-echo "  - final_score_distribution.png 最终分数分布"
-echo "  - vlm_score_distribution_p1.png VLM 分数分布"
-echo "  - 2d_decision_space_plot.png  多模态决策空间"
-echo "  - hypothesis_validation_plots.png 物理特征验证图"
-echo "训练日志: ./log_file/${MODEL}/${DATASET}/"
-echo "模型权重: ./models_main/${MODEL}/${DATASET}/"
-echo "曲线图片: ./plot/vlm_data/${MODEL}/${DATASET}/"
+banner "Finished"
+echo "Attack report directory: ./reports_lira_lite"
+echo "  - audit_details.json             per-sample final score and physics features"
+echo "Training logs: ./log_file/${MODEL}/${DATASET}/"
+echo "Model checkpoints: ./models_main/${MODEL}/${DATASET}/"
+echo "Loss curve images: ./plot/vlm_data/${MODEL}/${DATASET}/"

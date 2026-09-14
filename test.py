@@ -6,7 +6,6 @@ import sys
 import gc
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 from tqdm import tqdm
@@ -339,173 +338,9 @@ class LiraLiteAuditor:
         with open(os.path.join(REPORT_OUTPUT_DIR, "audit_details.json"), "w") as f:
             json.dump(details, f, indent=2)
 
-        self._plot_hypothesis_validation(details)
-        self._plot_vlm_score_distribution(details)
-        self._plot_final_score_distribution(details)
-        self._plot_2d_decision_space(details)
-
         y_scores = [self.state.final_scores.get(s.sample_id, 0.0) for s in self.state.samples]
         self._evaluate(y_scores)
 
-    def _plot_hypothesis_validation(self, details: List[Dict]):
-        print("\n" + "=" * 40)
-        print("📊 GENERATING HYPOTHESIS VALIDATION PLOTS...")
-        print("=" * 40)
-
-        mem_roc = [d["features"]["rate_of_change"] for d in details if d["gt"] == 1]
-        nm_roc = [d["features"]["rate_of_change"] for d in details if d["gt"] == 0]
-
-        mem_acc = [d["features"]["tail_fluctuation"] for d in details if d["gt"] == 1]
-        nm_acc = [d["features"]["tail_fluctuation"] for d in details if d["gt"] == 0]
-
-        mem_vlms = [d["vlm_score"] for d in details if d["gt"] == 1]
-        nm_vlms = [d["vlm_score"] for d in details if d["gt"] == 0]
-
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-        min_roc = min(min(nm_roc), min(mem_roc))
-        max_roc = max(max(nm_roc), max(mem_roc))
-        shared_bins_roc = np.linspace(min_roc, max_roc, 30)
-
-        axes[0].hist(nm_roc, bins=shared_bins_roc, alpha=0.6, color='blue', label='Non-Members', edgecolor='none')
-        axes[0].hist(mem_roc, bins=shared_bins_roc, alpha=0.6, color='red', label='Members', edgecolor='none')
-        axes[0].set_title('Early True Descent Rate (Top 30%)\n(Larger = More likely Member)')
-        axes[0].set_xlabel('Average Valid Drop per Epoch')
-        axes[0].set_ylabel('Frequency')
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)
-
-        min_acc = min(min(nm_acc), min(mem_acc))
-        max_acc = max(max(nm_acc), max(mem_acc))
-        shared_bins_acc = np.linspace(min_acc, max_acc, 30)
-
-        axes[1].hist(nm_acc, bins=shared_bins_acc, alpha=0.6, color='blue', label='Non-Members')
-        axes[1].hist(mem_acc, bins=shared_bins_acc, alpha=0.6, color='red', label='Members')
-        axes[1].set_title('Tail Fluctuation (Last 30%)\n(Smaller = More likely Member)')
-        axes[1].set_xlabel('Sum of Absolute Differences in Tail')
-        axes[1].set_ylabel('Frequency')
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
-
-        axes[2].scatter(nm_roc, nm_vlms, alpha=0.6, color='blue', label='Non-Members', edgecolors='k')
-        axes[2].scatter(mem_roc, mem_vlms, alpha=0.6, color='red', marker='^', label='Members', edgecolors='k')
-        axes[2].set_title('VLM Score vs. Descent Rate')
-        axes[2].set_xlabel('True Descent Rate')
-        axes[2].set_ylabel('VLM Prior Score')
-        axes[2].legend()
-        axes[2].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plot_path = os.path.join(REPORT_OUTPUT_DIR, "hypothesis_validation_plots.png")
-        plt.savefig(plot_path, dpi=300)
-        plt.close()
-
-    def _plot_vlm_score_distribution(self, details: List[Dict]):
-        print("\n" + "=" * 40)
-        print("📊 GENERATING PHASE 1 VLM SCORE DISTRIBUTION PLOT...")
-        print("=" * 40)
-
-        mem_vlm_scores = [d["vlm_score"] for d in details if d["gt"] == 1]
-        nm_vlm_scores = [d["vlm_score"] for d in details if d["gt"] == 0]
-
-        plt.figure(figsize=(10, 6))
-        plt.hist(nm_vlm_scores, bins=50, alpha=0.5, color='#3498db', label='Non-Members (Blue)', edgecolor='black',
-                 linewidth=0.5)
-        plt.hist(mem_vlm_scores, bins=50, alpha=0.5, color='#e74c3c', label='Members (Red)', edgecolor='black',
-                 linewidth=0.5)
-        plt.title('Phase 1: Pure VLM Score Distribution\n(Visual Macro-geometry Filter Only)', fontsize=14,
-                  fontweight='bold')
-        plt.xlabel('VLM Score (0 ~ 1, Higher = visually looks like Member)', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.axvspan(0.1, 1.0, color='gray', alpha=0.1, label='Phase 2 Entry Zone')
-        plt.legend(fontsize=11)
-        plt.grid(True, linestyle='--', alpha=0.5)
-        plt.tight_layout()
-        plot_path = os.path.join(REPORT_OUTPUT_DIR, "vlm_score_distribution_p1.png")
-        plt.savefig(plot_path, dpi=300)
-        plt.close()
-
-    def _plot_2d_decision_space(self, details: List[Dict]):
-        print("\n" + "=" * 40)
-        print("📊 GENERATING 2D MULTIMODAL DECISION SPACE PLOT...")
-        print("=" * 40)
-
-        mem_vlm = [d["vlm_score"] for d in details if d["gt"] == 1]
-        mem_phy = [d["score"] - d["vlm_score"] for d in details if d["gt"] == 1]
-
-        nm_vlm = [d["vlm_score"] for d in details if d["gt"] == 0]
-        nm_phy = [d["score"] - d["vlm_score"] for d in details if d["gt"] == 0]
-
-        plt.figure(figsize=(10, 8))
-
-        plt.scatter(nm_vlm, nm_phy, color='#3498db', alpha=0.6, label='Non-Members (GT=0)', edgecolors='k', s=50)
-        plt.scatter(mem_vlm, mem_phy, color='#e74c3c', marker='^', alpha=0.6, label='Members (GT=1)', edgecolors='k',
-                    s=50)
-
-        nm_scores = [d["score"] for d in details if d["gt"] == 0]
-        if len(nm_scores) > 0:
-            threshold_01_fpr = np.percentile(nm_scores, 99.9)
-        else:
-            threshold_01_fpr = 1.0
-
-        x_vals = np.linspace(-0.05, 1.05, 100)
-        plt.plot(x_vals, threshold_01_fpr - x_vals, 'g--', linewidth=2.5,
-                 label=f'Decision Boundary (Score = {threshold_01_fpr:.2f})')
-        plt.plot(x_vals, (threshold_01_fpr - 0.3) - x_vals, 'k--', linewidth=1.5, alpha=0.5,
-                 label='Sub-boundary (For reference)')
-
-        plt.annotate('Deceptive Non-members\n(VLM Hallucination Vetoed!)',
-                     xy=(0.9, 0.05), xytext=(0.55, 0.15),
-                     arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=8),
-                     fontsize=11, fontweight='bold', color='darkblue',
-                     bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#3498db", lw=2, alpha=0.9))
-
-        plt.annotate('Atypical Members\n(Physics Compensated!)',
-                     xy=(0.55, 0.75), xytext=(0.15, 0.85),
-                     arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=8),
-                     fontsize=11, fontweight='bold', color='darkred',
-                     bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#e74c3c", lw=2, alpha=0.9))
-
-        plt.title('2D Multimodal Decision Space: VLM vs. Physics Feature', fontsize=16, fontweight='bold', pad=15)
-        plt.xlabel('Phase 1: VLM Score (Visual Prior)', fontsize=14)
-        plt.ylabel('Phase 2: Physics Score (Micro-statistics)', fontsize=14)
-
-        plt.xlim(-0.05, 1.05)
-        plt.ylim(-0.05, 1.05)
-        plt.legend(loc='upper left', fontsize=12, framealpha=0.9)
-        plt.grid(True, linestyle='--', alpha=0.5)
-        plt.tight_layout()
-
-        plot_path = os.path.join(REPORT_OUTPUT_DIR, "2d_decision_space_plot.png")
-        plt.savefig(plot_path, dpi=300)
-        print(f"[Plot] 2D Decision Space plot saved to: {plot_path}")
-        plt.close()
-
-    def _plot_final_score_distribution(self, details: List[Dict]):
-        print("\n" + "=" * 40)
-        print("📊 GENERATING FINAL SCORE DISTRIBUTION PLOT...")
-        print("=" * 40)
-
-        mem_scores = [d["score"] for d in details if d["gt"] == 1]
-        nm_scores = [d["score"] for d in details if d["gt"] == 0]
-
-        plt.figure(figsize=(10, 6))
-        plt.hist(nm_scores, bins=50, alpha=0.6, color='#3498db', label='Non-Members (Blue)', edgecolor='black',
-                 linewidth=0.5)
-        plt.hist(mem_scores, bins=50, alpha=0.6, color='#e74c3c', label='Members (Red)', edgecolor='black',
-                 linewidth=0.5)
-        plt.title('Final Fusion Score Distribution\n(Dynamic Thresholding + Physics Penalty)', fontsize=14,
-                  fontweight='bold')
-        plt.xlabel('Final Score (Higher = More likely to be Member)', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.axvline(x=np.percentile(nm_scores, 99.9), color='green', linestyle='--', linewidth=2,
-                    label='Top 0.1% FPR Threshold')
-        plt.legend(fontsize=11)
-        plt.grid(True, linestyle='--', alpha=0.5)
-        plt.tight_layout()
-        plot_path = os.path.join(REPORT_OUTPUT_DIR, "final_score_distribution.png")
-        plt.savefig(plot_path, dpi=300)
-        plt.close()
 
     def _evaluate(self, y_scores: List[float]):
         y_true = [s.true_label for s in self.state.samples]
@@ -525,20 +360,6 @@ class LiraLiteAuditor:
         print(f"ROC AUC: {auc_val:.5f}")
 
         fpr, tpr, _ = roc_curve(y_true, y_scores)
-
-        plt.figure(figsize=(8, 8))
-        plt.plot(fpr, tpr, lw=2, label=f'Dynamic-Calib (AUC={auc_val:.4f})')
-        plt.plot([1e-5, 1], [1e-5, 1], color='gray', linestyle='--', label='Random Guess')
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.xlim([1e-4, 1.0])
-        plt.ylim([1e-4, 1.05])
-        plt.xlabel('False Positive Rate (Log Scale)')
-        plt.ylabel('True Positive Rate (Log Scale)')
-        plt.title('High-Precision MIA ROC (Dynamic Calibration)')
-        plt.grid(True, which="both", linestyle='--', alpha=0.5)
-        plt.legend()
-        plt.savefig(os.path.join(REPORT_OUTPUT_DIR, "roc_final_loglog.png"))
 
         f_interp = interp1d(fpr, tpr, bounds_error=False, fill_value=(0, 1))
 
