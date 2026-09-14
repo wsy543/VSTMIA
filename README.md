@@ -1,9 +1,10 @@
 # VLM-MIA：基于视觉语言模型的联邦学习成员推理攻击
 
-**版本：v1.2（2026-09-14）**
+**版本：v1.3（2026-09-14）**
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.3 | 2026-09-14 | 一键脚本新增阶段开关 `--no-data-process` / `--no-train` / `--no-plots`，可单独跳过数据预处理、联邦训练、loss 曲线渲染以复用已有产物（如"只重跑攻击"） |
 | v1.2 | 2026-09-14 | 一键脚本拆分出两个数据集专用入口：`run_stl10.sh`（STL10 + resnet）与 `run_location.sh`（location + nn），参数与 `run.sh` 一致并原样透传 |
 | v1.1 | 2026-09-14 | 只保留本项目方法：删除全部基线攻击（`baseline_attack.py` 及 `main.py` 中的 `ICLR` / `USENIX` / `SP` / `arxiv` / `MBA` / `enhancedMIA` / `CSF18` 分支）、`train.py` 中仅供基线使用的 arxiv 中间产物（余弦/梯度范数 pkl）与相关方法、`utils.py` 中仅供基线使用的指标函数 |
 | v1.0 | 2026-09-14 | 交付版：移除全部代码注释与防御实验；数据集仅保留 `STL10` / `location`，模型仅保留 `resnet` / `nn`，VLM 仅保留 `qwen3_2b`；攻击流程只输出数值报告（`reports_lira_lite/audit_details.json`），图片仅保留攻击必需的 loss 曲线；新增一键运行脚本 `run.sh` 与依赖清单 `requirements.txt` |
@@ -77,6 +78,16 @@ bash run_stl10.sh --vlm-source hf                # 强制从 HuggingFace 下载 
 bash run.sh --help                               # 查看全部参数
 ```
 
+阶段开关（默认全部执行，可单独跳过以复用已有产物）：
+
+```bash
+bash run_stl10.sh --no-train                     # 只做数据准备 + 生成曲线 + 攻击
+bash run_location.sh --no-plots                  # 复用已有曲线图片, 重新训练 + 攻击
+bash run_stl10.sh --no-data-process --no-train --no-plots   # 只跑攻击(复用全部已有产物)
+```
+
+注意 `main.py` 中 `--train_model` / `--data_process_flag` 是 `type=bool`，仅"传或不传"有效（传 `False` 也会被解析成 `True`），因此脚本用 `--no-train` / `--no-data-process` / `--no-plots` 这种"不传参数"的方式实现跳过。
+
 ### run.sh 参数
 
 | 参数 | 默认值 | 说明 |
@@ -92,6 +103,9 @@ bash run.sh --help                               # 查看全部参数
 | `--quick` | 关闭 | 快速模式，等价于 `--rounds 10` |
 | `--skip-data` | 关闭 | 跳过数据集下载 |
 | `--skip-vlm` | 关闭 | 跳过 VLM 权重下载 |
+| `--no-data-process` | 关闭 | 跳过数据预处理，复用已有 `datas/{dataset}/full.npz` |
+| `--no-train` | 关闭 | 跳过联邦训练，复用 `models_main/{model}/{dataset}/` 已有模型 |
+| `--no-plots` | 关闭 | 跳过 loss 曲线渲染，复用 `plot/vlm_data/{model}/{dataset}/` 已有图片 |
 | `--vlm-source S` | `auto` | VLM 下载源：`auto` / `modelscope` / `hf` |
 | `--vlm-dir DIR` | `./vlm_2b` | VLM 权重目录 |
 | `--install` | 关闭 | 运行前先安装 `requirements.txt` |

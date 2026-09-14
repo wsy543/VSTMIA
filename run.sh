@@ -16,6 +16,9 @@ QUICK=0
 SKIP_DATA=0
 SKIP_VLM=0
 DO_INSTALL=0
+DO_DATA_PROCESS=1
+DO_TRAIN=1
+DO_PLOTS=1
 VLM_SOURCE="auto"
 VLM_DIR="./vlm_2b"
 STL10_DIR="./datas/stl10"
@@ -31,8 +34,8 @@ Usage:
   bash run.sh [options]
 
 Options:
-  --dataset NAME    dataset: STL10 (default) or location
-  --model NAME      model: resnet (default) or nn
+  --dataset NAME    dataset: location (default) or STL10
+  --model NAME      model: nn (default) or resnet
   --rounds N        federated training rounds, default 200
   --clients N       number of clients, default 5
   --participant N   clients participating in each round, default 5
@@ -42,6 +45,9 @@ Options:
   --quick           quick smoke test (10 training rounds)
   --skip-data       skip dataset download
   --skip-vlm        skip VLM checkpoint download
+  --no-data-process skip data pre-processing (reuse existing datas/{dataset}/full.npz)
+  --no-train        skip federated training (reuse existing models_main checkpoints)
+  --no-plots        skip loss curve rendering (reuse existing plot/vlm_data images)
   --vlm-source S    VLM download source: auto (default) / modelscope / hf
   --vlm-dir DIR     directory of the VLM checkpoint, default ./vlm_2b
   --install         install dependencies from requirements.txt first
@@ -68,6 +74,9 @@ while [[ $# -gt 0 ]]; do
         --quick) QUICK=1; shift ;;
         --skip-data) SKIP_DATA=1; shift ;;
         --skip-vlm) SKIP_VLM=1; shift ;;
+        --no-data-process) DO_DATA_PROCESS=0; shift ;;
+        --no-train) DO_TRAIN=0; shift ;;
+        --no-plots) DO_PLOTS=0; shift ;;
         --vlm-source) VLM_SOURCE="$2"; shift 2 ;;
         --vlm-dir) VLM_DIR="$2"; shift 2 ;;
         --install) DO_INSTALL=1; shift ;;
@@ -229,29 +238,51 @@ if not downloaded:
 PY
 fi
 
-banner "Step 5/5  Running the full pipeline (${DATASET} + ${MODEL})"
+banner "Step 5/5  Running the pipeline (${DATASET} + ${MODEL})"
 echo "rounds: ${ROUNDS}, clients: ${CLIENTS}, participants per round: ${PARTICIPANT}, local epochs: ${EPOCHS}"
 echo "VLM: qwen3_2b @ ${VLM_DIR}"
 echo ""
-echo "pipeline: data split -> federated training -> loss curve rendering -> VLM membership inference"
+
+MAIN_ARGS=(
+    --dataset "$DATASET"
+    --model "$MODEL"
+    --client_num "$CLIENTS"
+    --participant "$PARTICIPANT"
+    --training_round "$ROUNDS"
+    --epochs "$EPOCHS"
+    --lr "$LR"
+    --batch_size "$BATCH_SIZE"
+    --random_seed "$SEED"
+    --method ours
+    --vlm_type qwen3_2b
+    --vlm_path "$VLM_DIR"
+)
+
+if [[ "$DO_DATA_PROCESS" == "1" ]]; then
+    MAIN_ARGS+=(--data_process_flag True)
+    echo "stage: data pre-processing  ON"
+else
+    echo "stage: data pre-processing  SKIPPED (reuse existing datas/${DATASET}/full.npz)"
+fi
+
+if [[ "$DO_TRAIN" == "1" ]]; then
+    MAIN_ARGS+=(--train_model True)
+    echo "stage: federated training   ON"
+else
+    echo "stage: federated training   SKIPPED (reuse existing models_main/${MODEL}/${DATASET}/)"
+fi
+
+if [[ "$DO_PLOTS" == "1" ]]; then
+    MAIN_ARGS+=(--regenerate_plots)
+    echo "stage: loss curve rendering ON"
+else
+    echo "stage: loss curve rendering SKIPPED (reuse existing plot/vlm_data/${MODEL}/${DATASET}/)"
+fi
+
+echo "stage: VLM attack           ON (always)"
 echo ""
 
-"$PYTHON" main.py \
-    --dataset "$DATASET" \
-    --model "$MODEL" \
-    --client_num "$CLIENTS" \
-    --participant "$PARTICIPANT" \
-    --training_round "$ROUNDS" \
-    --epochs "$EPOCHS" \
-    --lr "$LR" \
-    --batch_size "$BATCH_SIZE" \
-    --random_seed "$SEED" \
-    --data_process_flag True \
-    --train_model True \
-    --regenerate_plots \
-    --method ours \
-    --vlm_type qwen3_2b \
-    --vlm_path "$VLM_DIR"
+"$PYTHON" main.py "${MAIN_ARGS[@]}"
 
 banner "Finished"
 echo "Attack report directory: ./reports_lira_lite"

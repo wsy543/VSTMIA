@@ -194,7 +194,7 @@ class Phase2Investigator:
     def analyze(self, sample: Sample, vlm_score: float, alpha: float) -> Tuple[float, Dict]:
         phy = self.physics.extract_features(sample.loss_sequence)
 
-        p_roc = self.compute_empirical_percentile(phy['rate_of_change'], 'rate_of_change')
+        p_roc = 1.0 - self.compute_empirical_percentile(phy['rate_of_change'], 'rate_of_change')
         p_acc = 1.0 - self.compute_empirical_percentile(phy['tail_fluctuation'], 'tail_fluctuation')
 
         eps = 1e-5
