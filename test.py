@@ -13,44 +13,23 @@ from tqdm import tqdm
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 
-# ================== 延迟依赖检查 ==================
-# transformers 只在 VLM 相关路径使用, 其他方法(ICLR/USENIX/MBA等)不需要
-# 模块级静默导入, 缺失时只在 load_vlm() 报错
 try:
-    from transformers import Qwen3VLForConditionalGeneration, AutoProcessor, AutoModelForCausalLM
+    from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
     _HAS_TRANSFORMERS = True
 except ImportError:
     Qwen3VLForConditionalGeneration = None
     AutoProcessor = None
-    AutoModelForCausalLM = None
     _HAS_TRANSFORMERS = False
 
 from sklearn.metrics import roc_curve, roc_auc_score
 
-# ================== 全局配置 ==================
-# 默认模型路径
 VLM_PATHS = {
-    "qwen3":          "./vlm",
     "qwen3_2b":       "./vlm_2b",
-    "qwen3_8b":       "./vlm_8b",
-    "gemma4":         "./gemma4",
-    "llama3.2":       "./llama3.2",
-    "internvl3.5":    "./internvl3.5",
-    "internvl3.5_2b": "./internvl3.5_2b",
-    "smolvlm2":       "./smolvlm2_2.2b",
-    "llavaov":        "./llavaov",
-    "glm4.1v":        "./glm4.1v",
-    "glm4.1vbase":    "./glm4.1vbase",
-    "ovis2.5":        "./ovis2.52b",
 }
 REPORT_OUTPUT_DIR = "./reports_lira_lite"
 RANDOM_SEED = 42
 
 def load_vlm(model_path: str, vlm_type: str):
-    """
-    VLM 模型工厂: 根据 vlm_type 加载对应的模型和 processor
-    :return: (model, processor)
-    """
     if not _HAS_TRANSFORMERS:
         raise ImportError(
             "transformers not found. Please install: pip install transformers"
@@ -58,74 +37,14 @@ def load_vlm(model_path: str, vlm_type: str):
     print(f"[VLM Loader] Loading {vlm_type} from {model_path}...")
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
 
-    if vlm_type in ("qwen3", "qwen3_2b", "qwen3_8b"):
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "llama3.2":
-        from transformers import MllamaForConditionalGeneration
-        model = MllamaForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "gemma4":
-        # transformers 5.8.0 内置 Gemma4ForConditionalGeneration
-        # token 格式: <|image>(boi) <|image|>(image, 256个) <image|>(eoi)
-        from transformers import Gemma4ForConditionalGeneration
-        model = Gemma4ForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "internvl3.5":
-        from transformers import InternVLForConditionalGeneration
-        model = InternVLForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "llavaov":
-        # LLaVA OneVision (based on Qwen2-7B)
-        from transformers import LlavaOnevisionForConditionalGeneration
-        model = LlavaOnevisionForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "glm4.1v":
-        # GLM-4.1V-9B-Thinking (思考模型, 仅取 logits 无需禁用思考过程)
-        from transformers import Glm4vForConditionalGeneration
-        model = Glm4vForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "glm4.1vbase":
-        # GLM-4.1V-9B-Base (与 Thinking 版同架构 Glm4vForConditionalGeneration)
-        from transformers import Glm4vForConditionalGeneration
-        model = Glm4vForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "internvl3.5_2b":
-        # InternVL3.5-2B (与 8B 同架构, 语言骨干为 Qwen3-1.7B)
-        from transformers import InternVLForConditionalGeneration
-        model = InternVLForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "smolvlm2":
-        # SmolVLM2-2.2B (基于 Idefics3 / Llama 架构)
-        from transformers import SmolVLMForConditionalGeneration
-        model = SmolVLMForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
-        )
-    elif vlm_type == "ovis2.5":
-        # Ovis2.5-2B (NaViT + Qwen3-1.7B, 自定义 modeling 代码)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
-        )
-        # Ovis2.5 使用模型的 text_tokenizer 作为 processor
-        processor = model.text_tokenizer
-    else:
-        raise ValueError(f"Unknown vlm_type: {vlm_type}. Choose from: qwen3, qwen3_2b, qwen3_8b, gemma4, llama3.2, internvl3.5, internvl3.5_2b, smolvlm2, llavaov, glm4.1v, glm4.1vbase, ovis2.5")
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+    )
 
     return model, processor
 
 
 def get_vlm_path(vlm_type: str, custom_path: str | None = None) -> str:
-    """
-    获取 VLM 路径: 优先使用自定义路径, 否则从预设字典查找
-    """
     if custom_path:
         return custom_path
     if vlm_type in VLM_PATHS:
@@ -134,14 +53,12 @@ def get_vlm_path(vlm_type: str, custom_path: str | None = None) -> str:
 
 
 def get_paths(dataset, model):
-    """根据 dataset 和 model 动态生成路径"""
     loss_plot_base = f"./plot/vlm_data/{model}/{dataset}/"
     loss_history_path = f"./plot/vlm_data/{model}/{dataset}/metrics_history_selected.pkl"
     return loss_plot_base, loss_history_path
 
 
 
-# ================== 核心：物理动力学工具箱 ==================
 class DynamicsToolkit:
     def __init__(self, head_ratio: float = 0.5, tail_ratio: float = 0.5):
         self.head_ratio = head_ratio
@@ -158,10 +75,6 @@ class DynamicsToolkit:
                 "raw_loss": float(y[-1] if T > 0 else 0.0)
             }
 
-        # ==========================================
-        # 1. 真实下降速率 (True Descent Rate)
-        # 只取前 30% 阶段的下降步伐
-        # ==========================================
         head_end_idx = max(2, int(T * self.head_ratio))
         y_head = y[:head_end_idx]
 
@@ -175,9 +88,6 @@ class DynamicsToolkit:
 
         rate_of_change = float(true_descent_rate)
 
-        # ==========================================
-        # 2. 末期波动累积 (Tail Fluctuation)
-        # ==========================================
         tail_start_idx = int(T * self.tail_ratio)
         y_tail = y[tail_start_idx:]
 
@@ -193,7 +103,6 @@ class DynamicsToolkit:
         }
 
 
-# ================== 数据结构 ==================
 @dataclass
 class Sample:
     sample_id: int
@@ -210,9 +119,8 @@ class AgentState:
     final_scores: Dict[int, float] = field(default_factory=dict)
 
 
-# ================== Phase 1: VLM Screener ==================
 class Phase1Screener:
-    def __init__(self, model_path: str, vlm_type: str = "qwen3"):
+    def __init__(self, model_path: str, vlm_type: str = "qwen3_2b"):
         print(f"[Phase 1] Loading VLM ({vlm_type}): {model_path}...")
         self.model, self.processor = load_vlm(model_path, vlm_type)
         self.vlm_type = vlm_type
@@ -229,80 +137,20 @@ class Phase1Screener:
         ))
 
     def _build_inputs(self, image_path: str):
-        """构建模型输入, 兼容不同 VLM 的 chat_template 差异"""
         messages = [{"role": "user", "content": [
             {"type": "image", "image": os.path.abspath(image_path)},
             {"type": "text", "text": self.prompt}
         ]}]
-        # Qwen3VL / Llama 3.2 / InternVL3.5 都有 apply_chat_template
-        if self.vlm_type in ("qwen3", "qwen3_2b", "qwen3_8b", "llama3.2",
-                             "internvl3.5", "internvl3.5_2b",
-                             "llavaov", "glm4.1v", "glm4.1vbase"):
-            inputs = self.processor.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True,
-                return_dict=True, return_tensors="pt"
-            )
-        elif self.vlm_type == "gemma4":
-            # Gemma4 processor 内部机制:
-            #   传入 images → image_processor 算出 num_soft_tokens_per_image
-            #   传入 text (含 image_token 占位符) → processor 自动替换为 boi + image×N + eoi
-            #   无需手动拼接 token, 否则会破坏内部 regex 替换迭代器导致 StopIteration
-            from PIL import Image
-            img = Image.open(os.path.abspath(image_path)).convert("RGB")
-            prompt_with_tokens = f"{self.processor.image_token}\n{self.prompt}"
-            inputs = self.processor(
-                text=prompt_with_tokens, images=img, return_tensors="pt"
-            )
-        elif self.vlm_type == "smolvlm2":
-            # SmolVLM2: 手动构建输入, 避免 apply_chat_template 内部 processor.__call__ 的 kwargs 兼容问题
-            from PIL import Image
-            img = Image.open(os.path.abspath(image_path)).convert("RGB")
-            # chat_template 中 image 占位符为 <image>
-            prompt_with_tokens = f"<image>\n{self.prompt}"
-            inputs = self.processor(
-                text=prompt_with_tokens, images=img, return_tensors="pt"
-            )
-        elif self.vlm_type == "ovis2.5":
-            # Ovis2.5: 使用 model.preprocess_inputs 处理多模态输入
-            # processor 实际是 model.text_tokenizer, 需通过 self.model 访问
-            from PIL import Image
-            img = Image.open(os.path.abspath(image_path)).convert("RGB")
-            ovis_messages = [{"role": "user", "content": [
-                {"type": "image", "image": img},
-                {"type": "text", "text": self.prompt}
-            ]}]
-            input_ids, pixel_values, grid_thws = self.model.preprocess_inputs(
-                messages=ovis_messages,
-                add_generation_prompt=True
-            )
-            input_ids = input_ids.to(self.model.device)
-            pixel_values = pixel_values.to(self.model.device) if pixel_values is not None else None
-            grid_thws = grid_thws.to(self.model.device) if grid_thws is not None else None
-            attention_mask = torch.ne(
-                input_ids, self.model.text_tokenizer.pad_token_id
-            ).to(device=input_ids.device)
-            inputs = {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask,
-                "pixel_values": pixel_values,
-                "grid_thws": grid_thws,
-            }
-        else:
-            raise ValueError(f"Unknown vlm_type: {self.vlm_type}")
-        # Ovis2.5 返回的是 dict, 已在构建时 moved to device, 无需 .to()
-        if self.vlm_type == "ovis2.5":
-            return inputs
+        inputs = self.processor.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True,
+            return_dict=True, return_tensors="pt"
+        )
         return inputs.to(self.model.device)
 
     def scan(self, samples: List[Sample]) -> Dict[int, float]:
         scores = {}
-        # Ovis2.5 的 processor 实际是 text_tokenizer, 没有 .tokenizer 属性
-        if self.vlm_type == "ovis2.5":
-            token_id_1 = self.processor.encode("1", add_special_tokens=False)[0]
-            token_id_0 = self.processor.encode("0", add_special_tokens=False)[0]
-        else:
-            token_id_1 = self.processor.tokenizer.encode("1", add_special_tokens=False)[0]
-            token_id_0 = self.processor.tokenizer.encode("0", add_special_tokens=False)[0]
+        token_id_1 = self.processor.tokenizer.encode("1", add_special_tokens=False)[0]
+        token_id_0 = self.processor.tokenizer.encode("0", add_special_tokens=False)[0]
 
         print(f"[Phase 1] Screening {len(samples)} samples...")
         for s in tqdm(samples):
@@ -332,21 +180,15 @@ class Phase2Investigator:
         self.physics = DynamicsToolkit(head_ratio=head_ratio, tail_ratio=tail_ratio)
         self.bg_pool = {}
 
-        # 核心改动：不再算 mean 和 std，而是直接把非成员池的数值存下来，并排序！
         for key in ["rate_of_change", "tail_fluctuation"]:
             values = [d[key] for d in calibration_data]
             if not values: values = [0.0]
-            self.bg_pool[key] = np.sort(values)  # 排序好，方便后面直接查百分位
+            self.bg_pool[key] = np.sort(values)
 
         print(f"  > Calibration Pool Built with {len(self.bg_pool['rate_of_change'])} samples.")
 
     def compute_empirical_percentile(self, val: float, key: str) -> float:
-        """
-        计算非参数的经验百分位数 (Empirical Percentile / CDF)
-        返回该值在背景池中击败了百分之多少的非成员样本。
-        """
         bg_array = self.bg_pool[key]
-        # np.searchsorted 返回 val 插入排序数组的索引，除以总长度即为百分位 (0.0 ~ 1.0)
         percentile = np.searchsorted(bg_array, val) / len(bg_array)
         return float(percentile)
 
@@ -362,7 +204,6 @@ class Phase2Investigator:
 
         score_phy = 0.5 * p_roc + 0.5 * p_acc
 
-        # 【核心融合】：使用外部传入的自适应 alpha 权重
         final_score = alpha * score_phy + 1.0 * vlm_score
 
         phy['s_roc'] = p_roc
@@ -370,9 +211,8 @@ class Phase2Investigator:
         phy['score_phy'] = score_phy
 
         return float(final_score), phy
-# ================== 主程序 ==================
 class LiraLiteAuditor:
-    def __init__(self, dataset: str, model: str, vlm_type: str = "qwen3", vlm_path: str | None = None,
+    def __init__(self, dataset: str, model: str, vlm_type: str = "qwen3_2b", vlm_path: str | None = None,
                  enable_phase2: bool = True,
                  alpha_cap: float = 5.0, calib_threshold: float = 0.1,
                  head_ratio: float = 0.5, tail_ratio: float = 0.5):
@@ -428,12 +268,10 @@ class LiraLiteAuditor:
         print(f"[Data] Loaded {target_test_m} Members and {target_test_nm} Non-Members. Total: {len(samples)}.")
 
     def run(self):
-        # === Phase 1: VLM Screening (始终开启) ===
         screener = Phase1Screener(self.vlm_path, self.vlm_type)
         self.state.phase1_scores = screener.scan(self.state.samples)
         screener.unload()
 
-        # === 建立动态背景模型 (无监督) ===
         print("\n[Calibration] Dynamically building calibration pool from VLM highly confident pseudo-negatives...")
 
         calib_candidates = [s for s in self.state.samples if self.state.phase1_scores[s.sample_id] < self.calib_threshold]
@@ -448,17 +286,12 @@ class LiraLiteAuditor:
         toolkit = DynamicsToolkit(head_ratio=self.head_ratio, tail_ratio=self.tail_ratio)
         self.state.calibration_pool = [toolkit.extract_features(s.loss_sequence) for s in calib_candidates]
 
-        # === 计算自适应权重 (Adaptive Weighting) ===
-        # 根据 VLM 的整体确信度，决定物理证据的权重
         vlm_scores_array = np.array(list(self.state.phase1_scores.values()))
 
-        # 计算平均确信度 (距离 0.5 的绝对差值的均值，映射到 0~1)
         mean_confidence = np.mean(2.0 * np.abs(vlm_scores_array - 0.5))
 
-        # 【终极自适应公式】：不确定性与置信度比率 (Uncertainty-to-Confidence Ratio)
-        # 加上 1e-5 防止除以 0，加上 min(5.0, ...) 作为最高权重上限防崩
         adaptive_alpha = (1.0 - mean_confidence) / (mean_confidence + 1e-5)
-        adaptive_alpha = min(self.alpha_cap, float(adaptive_alpha))  # 将物理分数权重封顶
+        adaptive_alpha = min(self.alpha_cap, float(adaptive_alpha))
 
         print("\n[Fusion Strategy] Computing task-complexity adaptive weights...")
         print(f"  > VLM Mean Confidence: {mean_confidence:.3f}")
@@ -467,7 +300,6 @@ class LiraLiteAuditor:
         details = []
 
         if self.enable_phase2:
-            # === Phase 2: Calibrated Analysis ===
             investigator = Phase2Investigator(self.state.calibration_pool,
                                               head_ratio=self.head_ratio, tail_ratio=self.tail_ratio)
 
@@ -479,7 +311,6 @@ class LiraLiteAuditor:
                     final_score = vlm_score
                     phy = toolkit.extract_features(sample.loss_sequence)
                 else:
-                    # 【修改这里】：把计算好的 adaptive_alpha 传进去！
                     final_score, phy = investigator.analyze(sample, vlm_score, alpha=adaptive_alpha)
 
                 self.state.final_scores[sample.sample_id] = final_score
@@ -492,7 +323,6 @@ class LiraLiteAuditor:
                     "vlm_score": float(vlm_score)
                 })
         else:
-            # Phase 2 关闭: 直接使用 Phase 1 得分作为最终得分
             print("[Phase 2] SKIPPED — using Phase 1 scores directly as final scores")
             for sample in tqdm(self.state.samples):
                 vlm_score = self.state.phase1_scores[sample.sample_id]
@@ -509,13 +339,11 @@ class LiraLiteAuditor:
         with open(os.path.join(REPORT_OUTPUT_DIR, "audit_details.json"), "w") as f:
             json.dump(details, f, indent=2)
 
-        # ================= 生成各种图表 =================
         self._plot_hypothesis_validation(details)
         self._plot_vlm_score_distribution(details)
         self._plot_final_score_distribution(details)
         self._plot_2d_decision_space(details)
 
-        # ================= 提取最终分数，进行无泄露评估 =================
         y_scores = [self.state.final_scores.get(s.sample_id, 0.0) for s in self.state.samples]
         self._evaluate(y_scores)
 
@@ -598,44 +426,34 @@ class LiraLiteAuditor:
         plt.close()
 
     def _plot_2d_decision_space(self, details: List[Dict]):
-        """生成 2D 散点图，证明多模态融合的互相校准效应"""
         print("\n" + "=" * 40)
         print("📊 GENERATING 2D MULTIMODAL DECISION SPACE PLOT...")
         print("=" * 40)
 
-        # 提取真正的 Members (GT=1)
-        # 因为在你的代码中，d["score"] 是 final_score (VLM + Phy)，
-        # 所以物理分数 (Phy) 可以通过 d["score"] - d["vlm_score"] 反推出来
         mem_vlm = [d["vlm_score"] for d in details if d["gt"] == 1]
         mem_phy = [d["score"] - d["vlm_score"] for d in details if d["gt"] == 1]
 
-        # 提取 Non-Members (GT=0)
         nm_vlm = [d["vlm_score"] for d in details if d["gt"] == 0]
         nm_phy = [d["score"] - d["vlm_score"] for d in details if d["gt"] == 0]
 
         plt.figure(figsize=(10, 8))
 
-        # 1. 画散点
         plt.scatter(nm_vlm, nm_phy, color='#3498db', alpha=0.6, label='Non-Members (GT=0)', edgecolors='k', s=50)
         plt.scatter(mem_vlm, mem_phy, color='#e74c3c', marker='^', alpha=0.6, label='Members (GT=1)', edgecolors='k',
                     s=50)
 
-        # 2. 画决策边界 (Total Score = VLM + Phy = C)
-        # 我们画出最终得分排在 Top 0.1% FPR 处的阈值线
         nm_scores = [d["score"] for d in details if d["gt"] == 0]
         if len(nm_scores) > 0:
             threshold_01_fpr = np.percentile(nm_scores, 99.9)
         else:
-            threshold_01_fpr = 1.0  # 兜底阈值
+            threshold_01_fpr = 1.0
 
         x_vals = np.linspace(-0.05, 1.05, 100)
-        # y = C - x
         plt.plot(x_vals, threshold_01_fpr - x_vals, 'g--', linewidth=2.5,
                  label=f'Decision Boundary (Score = {threshold_01_fpr:.2f})')
         plt.plot(x_vals, (threshold_01_fpr - 0.3) - x_vals, 'k--', linewidth=1.5, alpha=0.5,
                  label='Sub-boundary (For reference)')
 
-        # 3. 添加说明性高亮区域/箭头 (仅限有相关数据时，否则画圈示意)
         plt.annotate('Deceptive Non-members\n(VLM Hallucination Vetoed!)',
                      xy=(0.9, 0.05), xytext=(0.55, 0.15),
                      arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=8),
@@ -648,7 +466,6 @@ class LiraLiteAuditor:
                      fontsize=11, fontweight='bold', color='darkred',
                      bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#e74c3c", lw=2, alpha=0.9))
 
-        # 4. 图表装饰
         plt.title('2D Multimodal Decision Space: VLM vs. Physics Feature', fontsize=16, fontweight='bold', pad=15)
         plt.xlabel('Phase 1: VLM Score (Visual Prior)', fontsize=14)
         plt.ylabel('Phase 2: Physics Score (Micro-statistics)', fontsize=14)
@@ -741,24 +558,10 @@ class LiraLiteAuditor:
 
 
 def run_attack(dataset: str, model: str, max_samples: int = 1000,
-               vlm_type: str = "qwen3", vlm_path: str | None = None,
+               vlm_type: str = "qwen3_2b", vlm_path: str | None = None,
                enable_phase2: bool = True,
                alpha_cap: float = 5.0, calib_threshold: float = 0.1,
                head_ratio: float = 0.5, tail_ratio: float = 0.5):
-    """
-    对外暴露的攻击入口函数，供 main.py 等调用
-
-    :param dataset: 数据集名称, 如 'CIFAR10', 'CIFAR100', 'STL10' 等
-    :param model: 模型名称, 如 'mobilenet', 'densenet', 'resnet' 等
-    :param max_samples: 最多测试的样本数
-    :param vlm_type: VLM 类型, qwen3 / qwen3_2b / qwen3_8b / gemma4 / llama3.2 / internvl3.5 / llavaov / glm4.1v / glm4.1vbase / ovis2.5
-    :param vlm_path: 自定义 VLM 路径, 为 None 则使用预设路径
-    :param enable_phase2: 是否启用 Phase 2 (Physics-based Analysis), 默认开启
-    :param alpha_cap: 物理特征权重上限, 默认 5.0
-    :param calib_threshold: 校准池伪负样本 VLM 分数阈值, 默认 0.1
-    :param head_ratio: 头部轮数比例 (下降速率), 默认 0.5
-    :param tail_ratio: 尾部轮数比例 (末期波动), 默认 0.5
-    """
     print(f"\n{'='*60}")
     print(f"LiraLite Attack: dataset={dataset}, model={model}, max_samples={max_samples}")
     print(f"VLM: {vlm_type} @ {get_vlm_path(vlm_type, vlm_path)}")
@@ -779,13 +582,12 @@ def run_attack(dataset: str, model: str, max_samples: int = 1000,
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='LiraLite MIA Attack')
-    parser.add_argument('--dataset', type=str, default='CIFAR100', help='Dataset name')
-    parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
+    parser.add_argument('--dataset', type=str, default='STL10', choices=['STL10', 'location'],
+                        help='Dataset name')
+    parser.add_argument('--model', type=str, default='resnet', choices=['resnet', 'nn'],
+                        help='Model name')
     parser.add_argument('--max_samples', type=int, default=1000, help='Max test samples')
-    parser.add_argument('--vlm_type', type=str, default='qwen3',
-                        choices=['qwen3', 'qwen3_2b', 'qwen3_8b', 'gemma4', 'llama3.2',
-                                 'internvl3.5', 'internvl3.5_2b', 'smolvlm2',
-                                 'llavaov', 'glm4.1v', 'glm4.1vbase', 'ovis2.5'],
+    parser.add_argument('--vlm_type', type=str, default='qwen3_2b', choices=['qwen3_2b'],
                         help='VLM model type')
     parser.add_argument('--vlm_path', type=str, default=None,
                         help='Custom VLM model path (overrides preset)')
