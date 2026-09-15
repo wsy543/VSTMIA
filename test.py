@@ -81,7 +81,7 @@ class DynamicsToolkit:
         descending_steps = diffs[diffs < 0]
 
         if len(descending_steps) > 0:
-            true_descent_rate = np.sum(np.abs(descending_steps)) / len(descending_steps)
+            true_descent_rate = np.sum(np.abs(descending_steps))
         else:
             true_descent_rate = 0.0
 
