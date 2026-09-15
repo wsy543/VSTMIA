@@ -1,9 +1,10 @@
 # VLM-MIA：基于视觉语言模型的联邦学习成员推理攻击
 
-**版本：v1.4（2026-09-15）**
+**版本：v1.5（2026-09-15）**
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.5 | 2026-09-15 | 新增 Windows 支持：`run.ps1`（PowerShell 引擎，功能与 `run.sh` 一致）+ 三个双击入口 `run.bat` / `run_stl10.bat` / `run_location.bat`；README 增加 3.2 Windows 小节与参数对照表 |
 | v1.4 | 2026-09-15 | 随机性固定：新增 `utils.set_seed()` 统一播种 python `random` / `numpy` / `torch` / `torch.cuda`，并在 `main.py`、`FederatedLearning.__init__`、`ours.ours.__init__`、`LiraLiteAuditor.__init__`、`process_data` 处调用；全链路（数据划分/训练权重/曲线图片/AUC/audit_details.json）现已逐字节可复现（含跳过数据预处理的路径） |
 | v1.3 | 2026-09-14 | 一键脚本新增阶段开关 `--no-data-process` / `--no-train` / `--no-plots`，可单独跳过数据预处理、联邦训练、loss 曲线渲染以复用已有产物（如"只重跑攻击"） |
 | v1.2 | 2026-09-14 | 一键脚本拆分出两个数据集专用入口：`run_stl10.sh`（STL10 + resnet）与 `run_location.sh`（location + nn），参数与 `run.sh` 一致并原样透传 |
@@ -33,7 +34,8 @@
 
 ## 2. 环境要求
 
-- Linux，Python >= 3.9（推荐 3.10）
+- Linux 或 Windows（Windows 用 PowerShell 5.1+，Win10/11 自带；入口见 3.2）
+- Python >= 3.9（推荐 3.10）
 - NVIDIA GPU（显存 >= 8 GB）：VLM 权重约 4.3 GB（bf16），联邦训练与攻击都需要 GPU
 - 磁盘空间：STL10 原始数据约 2.6 GB + 处理后 `full.npz` 约 0.6 GB；VLM 权重约 4.3 GB
 
@@ -44,6 +46,8 @@ pip install -r requirements.txt
 ```
 
 ## 3. 快速开始（一键运行）
+
+### 3.1 Linux
 
 两个数据集各有一个专用入口脚本，参数与 `run.sh` 完全一致（会原样透传）：
 
@@ -111,6 +115,38 @@ bash run_stl10.sh --no-data-process --no-train --no-plots   # 只跑攻击(复�
 | `--vlm-dir DIR` | `./vlm_2b` | VLM 权重目录 |
 | `--install` | 关闭 | 运行前先安装 `requirements.txt` |
 
+### 3.2 Windows
+
+Windows 不需要 Git Bash / WSL：`run.ps1` 是与 `run.sh` 行为一致的 PowerShell 引擎，三个 `.bat` 是双击即可的启动器（内部用 `powershell -ExecutionPolicy Bypass -File`，**不修改系统执行策略**）。
+
+```bat
+run_stl10.bat                          :: STL10 + resnet 完整流程（双击即可）
+run_location.bat                       :: location + nn 完整流程
+run.bat                                :: 使用默认配置 (location + nn)
+run_stl10.bat -Quick                   :: 快速冒烟（10 轮训练）
+run.bat -Install -SkipVlm              :: 先装依赖、跳过 VLM 下载
+run_stl10.bat -NoTrain -NoPlots        :: 只重跑攻击（复用已有模型与图片）
+run.bat -Help                           :: 查看全部参数
+```
+
+参数用 PowerShell 风格，与 `run.sh` 一一对应：
+
+| Linux | Windows | 说明 |
+|---|---|---|
+| `--dataset STL10` | `-Dataset STL10` | 数据集 |
+| `--model resnet` | `-Model resnet` | 模型 |
+| `--rounds 50` / `--clients 5` / `--participant 5` / `--epochs 2` | `-Rounds 50` / `-Clients 5` / `-Participant 5` / `-Epochs 2` | 训练规模 |
+| `--lr 0.001` / `--batch-size 64` | `-Lr 0.001` / `-BatchSize 64` | 超参 |
+| `--quick` / `--skip-data` / `--skip-vlm` | `-Quick` / `-SkipData` / `-SkipVlm` | 开关 |
+| `--no-data-process` / `--no-train` / `--no-plots` | `-NoDataProcess` / `-NoTrain` / `-NoPlots` | 阶段开关 |
+| `--vlm-source hf` / `--vlm-dir ./vlm_2b` / `--install` | `-VlmSource hf` / `-VlmDir ./vlm_2b` / `-Install` | 其他 |
+
+说明：
+
+- 安装 Python 时请勾选 **Add python.exe to PATH**（或设置环境变量 `PYTHON` 指向解释器）；
+- `.bat` 结尾会 `pause` 以便双击时查看输出，脚本/终端调用时可先 `set NOPAUSE=1` 跳过；
+- 直接在 PowerShell 中调用引擎也可以：`powershell -ExecutionPolicy Bypass -File .\run.ps1 -Dataset STL10 -Model resnet`。
+
 ## 4. 手动分步运行
 
 ### 4.1 准备数据集
@@ -170,9 +206,13 @@ python test.py --dataset STL10 --model resnet --max_samples 1000
 | 文件 | 说明 |
 |---|---|
 | `main.py` | 主入口：参数解析、数据准备、联邦训练、攻击调度 |
-| `run.sh` | 一键运行脚本（环境检查 + 数据下载 + 权重下载 + 全流程），两个入口脚本共用 |
-| `run_stl10.sh` | STL10 + resnet 专用入口，等价于 `run.sh --dataset STL10 --model resnet` |
-| `run_location.sh` | location + nn 专用入口，等价于 `run.sh --dataset location --model nn` |
+| `run.sh` | Linux 一键运行脚本（环境检查 + 数据下载 + 权重下载 + 全流程），两个入口脚本共用 |
+| `run_stl10.sh` | Linux：STL10 + resnet 专用入口，等价于 `run.sh --dataset STL10 --model resnet` |
+| `run_location.sh` | Linux：location + nn 专用入口，等价于 `run.sh --dataset location --model nn` |
+| `run.ps1` | Windows（PowerShell）一键运行引擎，功能与 `run.sh` 一致 |
+| `run.bat` | Windows 主入口（双击运行 `run.ps1`） |
+| `run_stl10.bat` | Windows：STL10 + resnet 专用入口 |
+| `run_location.bat` | Windows：location + nn 专用入口 |
 | `data_processing.py` | 数据集下载与预处理，生成 `datas/{dataset}/full.npz` |
 | `Data.py` | 数据集封装、客户端划分（uniform / dirichlet） |
 | `train.py` | 联邦学习训练主循环（聚合、保存中间轮次模型） |
