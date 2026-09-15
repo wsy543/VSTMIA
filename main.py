@@ -34,7 +34,7 @@ import torch
 from train import FederatedLearning
 from data_processing import process_data
 import logging
-from utils import path_exists
+from utils import path_exists, set_seed
 import ours
 import test
 
@@ -117,6 +117,7 @@ def init_args():
 
 if __name__ == '__main__':
     args = init_args()
+    set_seed(args.random_seed)
     init_logging(args)
     args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if args.data_process_flag is True:

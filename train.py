@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 import sys
 import torch
-from utils import path_exists
+from utils import path_exists, set_seed
 
 import logging
 logger = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class FederatedLearning:
     def __init__(self, args):
         self.args = args
+        set_seed(self.args.random_seed)
         self.datas, self.labels = self.split_data(self.args, path=args.data_path + '/' + args.dataset + '/full.npz')
         self.global_model = self.build_global_model()
         self.client_models = []

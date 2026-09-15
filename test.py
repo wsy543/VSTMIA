@@ -22,6 +22,8 @@ except ImportError:
 
 from sklearn.metrics import roc_curve, roc_auc_score
 
+from utils import set_seed
+
 VLM_PATHS = {
     "qwen3_2b":       "./vlm_2b",
 }
@@ -215,8 +217,7 @@ class LiraLiteAuditor:
                  enable_phase2: bool = True,
                  alpha_cap: float = 5.0, calib_threshold: float = 0.1,
                  head_ratio: float = 0.5, tail_ratio: float = 0.5):
-        np.random.seed(RANDOM_SEED)
-        torch.manual_seed(RANDOM_SEED)
+        set_seed(RANDOM_SEED)
         self.state = AgentState()
         self.dataset = dataset
         self.model = model

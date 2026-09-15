@@ -1,4 +1,3 @@
-import torch
 import torchvision
 import torchvision.transforms as transforms
 import os
@@ -8,9 +7,8 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 import glob
 import ssl
-import random
 
-from utils import path_exists
+from utils import path_exists, set_seed
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -95,11 +93,7 @@ def load_and_process_location(root_dir, save_dir):
 
 def process_data(args,download=False):
     random_seed = getattr(args, 'random_seed', 123)
-    random.seed(random_seed)
-    np.random.seed(random_seed)
-    torch.manual_seed(random_seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(random_seed)
+    set_seed(random_seed)
 
     split_ratio = args.split_ratio
     if args.dataset == 'STL10':

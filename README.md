@@ -1,9 +1,10 @@
 # VLM-MIA：基于视觉语言模型的联邦学习成员推理攻击
 
-**版本：v1.3（2026-09-14）**
+**版本：v1.4（2026-09-15）**
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.4 | 2026-09-15 | 随机性固定：新增 `utils.set_seed()` 统一播种 python `random` / `numpy` / `torch` / `torch.cuda`，并在 `main.py`、`FederatedLearning.__init__`、`ours.ours.__init__`、`LiraLiteAuditor.__init__`、`process_data` 处调用；全链路（数据划分/训练权重/曲线图片/AUC/audit_details.json）现已逐字节可复现（含跳过数据预处理的路径） |
 | v1.3 | 2026-09-14 | 一键脚本新增阶段开关 `--no-data-process` / `--no-train` / `--no-plots`，可单独跳过数据预处理、联邦训练、loss 曲线渲染以复用已有产物（如"只重跑攻击"） |
 | v1.2 | 2026-09-14 | 一键脚本拆分出两个数据集专用入口：`run_stl10.sh`（STL10 + resnet）与 `run_location.sh`（location + nn），参数与 `run.sh` 一致并原样透传 |
 | v1.1 | 2026-09-14 | 只保留本项目方法：删除全部基线攻击（`baseline_attack.py` 及 `main.py` 中的 `ICLR` / `USENIX` / `SP` / `arxiv` / `MBA` / `enhancedMIA` / `CSF18` 分支）、`train.py` 中仅供基线使用的 arxiv 中间产物（余弦/梯度范数 pkl）与相关方法、`utils.py` 中仅供基线使用的指标函数 |
@@ -180,7 +181,7 @@ python test.py --dataset STL10 --model resnet --max_samples 1000
 | `test.py` | 攻击主流程：VLM 打分 → 物理特征校准 → 自适应融合 → 评估（AUC / TPR@FPR） |
 | `CSModels.py` | 模型工厂（resnet / nn）与数据相关参数（分辨率、类别数） |
 | `normalModel.py` | 网络结构实现（ResNet-9-9-9、MLP） |
-| `utils.py` | 通用工具：npz 读取、目录创建 |
+| `utils.py` | 通用工具：`set_seed` 统一播种、npz 读取、目录创建 |
 
 ## 6. 输出说明
 
@@ -195,7 +196,17 @@ python test.py --dataset STL10 --model resnet --max_samples 1000
 | `plot/vlm_data/{model}/{dataset}/metrics_history_selected.pkl` | 每个样本的逐轮 loss 序列 |
 | `reports_lira_lite/audit_details.json` | 每个样本的最终分数、VLM 分数与物理特征 |
 
-## 7. 常见问题
+## 7. 可复现性
+
+同一份代码 + 同一组命令行参数（`--random_seed` 默认 `123`）在相同机器上可逐字节复现：**数据划分 → 联邦训练权重 → loss 曲线图片 → 攻击 AUC / `audit_details.json`** 全部一致（每条路径均已实测两遍对比 md5）。
+
+- 播种统一由 `utils.set_seed()` 完成，同时设置 python `random`、`numpy`、`torch`、`torch.cuda` 四个 RNG；
+- 播种位置：`main.py` 入口、`FederatedLearning.__init__`、`ours.ours.__init__`、`LiraLiteAuditor.__init__`、`process_data`；
+- 训练/数据侧使用 `--random_seed`（默认 `123`），攻击侧固定 `RANDOM_SEED = 42`（`test.py`）；
+- 因此**跳过数据预处理直接训练**（如 `--no-data-process`）同样可复现，不依赖调用顺序；
+- 限制：GPU 上的浮点归约、cuDNN 卷积算法、以及 `main.py` 自动选择空闲显存最多的 GPU，都可能带来极小的非确定性，跨机器不保证 bit 级一致。若需要更严格，可自行在 `main.py` 中加 `torch.backends.cudnn.deterministic = True`（会略降速）。
+
+## 8. 常见问题
 
 **Q: 显存不足（CUDA out of memory）？**
 VLM 采用 `device_map="auto"` 加载，会自动选择空闲显存最多的 GPU。若显存紧张，可先关闭其它占用 GPU 的进程；2B 模型在 8 GB 显存下可运行。

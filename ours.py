@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 import random
-from utils import load_npz_data
+from utils import load_npz_data, set_seed
 from torch.utils.data import DataLoader
 from CSModels import ClientModel,PublicLayer,PrivateLayer
 from Data import ClientDataset,ClientDatasetWithMember,TensorDataset
@@ -32,6 +32,7 @@ from scipy.stats import chi2
 class ours:
     def __init__(self,args,size):
         self.args=args
+        set_seed(self.args.random_seed)
         self.batch_size=1
         self.train_size=size
         self.lr=self.args.lr
